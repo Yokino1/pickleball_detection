@@ -1,0 +1,57 @@
+camera:
+  source: data/test_2.mp4
+
+models:
+  ball_model: artifacts/models/ball_best.pt
+  ball_class_id: 0
+  exclude_region: [0, 0, 120, 100]
+  player_model: null
+
+tracking:
+  min_conf: 0.25
+  max_jump_px: 180
+  max_predict_frames: 3
+  smoothing_window: 3
+
+court:
+  enabled: true
+  overlay_view: sideview
+  keypoints_path: configs/court_calibration_test2.yaml
+  calibration_frame: 28
+  tracker: template
+  template_half_size: 15
+  search_radius: 50
+  recovery_search_radius: 120
+  min_ncc_score: 0.60
+  ransac_reproj_px: 5.0
+  line_band_px: 4
+  line_score_min: 0.20
+  max_hold_frames: 15
+  motion_bridge_enabled: false
+  max_lost_frames: 5
+  recovery_radius: 120
+  smooth_alpha: 0.50
+  max_jump_px: 45
+  geometry_consistency_enabled: true
+  geometry_ransac_px: 6.0
+  geometry_snap_px: 12.0
+  line_refiner_enabled: false
+  anchor_mode: true
+  h_smooth_alpha: 0.55
+  auto_recalibrate_on_drift: false
+  refresh_templates_on_stable: false
+  min_inlier_ratio: 0.50
+  max_reproj_error_px: 15.0
+  min_area_px: 5000
+  max_cached_frames: 30
+  draw_mini_court: true
+  draw_image_court_when_projected: true
+  allow_cached_homography: true
+
+players:
+  enabled: false
+
+output:
+  save_jsonl: true
+  save_video: true
+  draw_overlay: true

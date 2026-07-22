@@ -1,0 +1,103 @@
+{
+  "sources": {
+    "pen_v1": {
+      "images": 10921,
+      "ball_boxes": 12719,
+      "ignored_objects": 0,
+      "converted_polygon_boxes": 9,
+      "positive_images": 10921,
+      "multi_ball_images": 1192
+    },
+    "moving_v3": {
+      "images": 663,
+      "ball_boxes": 666,
+      "ignored_objects": 0,
+      "converted_polygon_boxes": 0,
+      "positive_images": 663,
+      "multi_ball_images": 3
+    },
+    "ball_detector_v1": {
+      "images": 255,
+      "ball_boxes": 485,
+      "ignored_objects": 0,
+      "converted_polygon_boxes": 9,
+      "positive_images": 233,
+      "multi_ball_images": 150,
+      "negative_images": 22
+    },
+    "detector_v6": {
+      "images": 3036,
+      "ball_boxes": 3036,
+      "ignored_objects": 0,
+      "converted_polygon_boxes": 0,
+      "positive_images": 3036
+    },
+    "inapickle_v1": {
+      "images": 47025,
+      "ball_boxes": 50832,
+      "ignored_objects": 139693,
+      "converted_polygon_boxes": 0,
+      "positive_images": 38985,
+      "multi_ball_images": 7363,
+      "negative_images": 8040
+    }
+  },
+  "errors": [],
+  "raw_valid_records": 61900,
+  "source_deduplication": {
+    "unique_source_frames": 23007,
+    "selected_positive_images": 21713,
+    "selected_negative_images": 1294,
+    "selected_ball_boxes": 25141,
+    "variants_removed": 38893,
+    "source_frames_leaking_across_original_splits": 708,
+    "variant_groups_with_ball_count_disagreement": 225
+  },
+  "exact_deduplication": {
+    "unique_images": 23007,
+    "exact_duplicates_removed": 0,
+    "duplicate_groups_with_label_disagreement": 0
+  },
+  "negative_sampling": {
+    "positive_images": 21713,
+    "available_negative_images": 1294,
+    "kept_negative_images": 1294,
+    "max_negative_to_positive_ratio": 0.25
+  },
+  "cleaned_splits": {
+    "test": 2697,
+    "valid": 2489,
+    "train": 17821
+  },
+  "cleaned_source_splits": {
+    "ball_detector_v1": {
+      "train": 255
+    },
+    "detector_v6": {
+      "test": 131,
+      "valid": 128,
+      "train": 956
+    },
+    "inapickle_v1": {
+      "test": 1324,
+      "valid": 1133,
+      "train": 9415
+    },
+    "moving_v3": {
+      "test": 88,
+      "valid": 98,
+      "train": 105
+    },
+    "pen_v1": {
+      "test": 1154,
+      "valid": 1130,
+      "train": 7090
+    }
+  },
+  "clip_groups": 1079,
+  "clip_group_overlap_after_resplit": 0,
+  "output_image_methods": {
+    "hardlink": 22873,
+    "zip_extract": 134
+  }
+}

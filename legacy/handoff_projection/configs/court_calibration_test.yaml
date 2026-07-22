@@ -1,0 +1,37 @@
+calibration:
+  type: manual_annotation
+  source_video: ..\data\test.mp4
+  reference_frame: 5
+  num_keypoints: 10
+court:
+  keypoints_14:
+    far_kitchen_left:
+    - 257.0
+    - 600.0
+    far_kitchen_center:
+    - 323.0
+    - 456.0
+    far_kitchen_right:
+    - 363.0
+    - 363.0
+    net_left:
+    - 545.0
+    - 596.0
+    net_right:
+    - 551.0
+    - 360.0
+    near_kitchen_left:
+    - 827.0
+    - 587.0
+    near_kitchen_center:
+    - 774.0
+    - 449.0
+    near_kitchen_right:
+    - 738.0
+    - 356.0
+    near_baseline_center:
+    - 1245.0
+    - 443.0
+    near_baseline_right:
+    - 1133.0
+    - 348.0

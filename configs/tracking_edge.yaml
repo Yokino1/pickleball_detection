@@ -1,0 +1,42 @@
+schema_version: 1
+
+input:
+  source: data/test_2.mp4
+
+detector:
+  backend: onnxruntime
+  model: artifacts/models/ball_best.onnx
+  ball_class_id: 0
+  imgsz: 640
+  low_conf: 0.08
+  iou_threshold: 0.50
+  max_detections: 24
+  providers: null
+  exclude_region: null
+
+tracker:
+  high_conf: 0.25
+  low_conf: 0.08
+  min_hits: 2
+  max_predict_frames: 8
+  max_missing_frames: 20
+  base_gate_px: 70.0
+  max_gate_px: 280.0
+  gate_growth_px: 20.0
+  velocity_gate_scale: 1.5
+  confidence_decay: 0.82
+  process_noise: 12.0
+  measurement_noise: 4.0
+  max_tracks: 16
+  emit_tentative: true
+
+runtime:
+  detector_interval: 1
+  fail_on_detector_error: true
+
+output:
+  video: outputs/tracking_edge_overlay.mp4
+  jsonl: outputs/tracking_edge.jsonl
+  codec: mp4v
+  trail_length: 20
+  draw_raw_detections: false
