@@ -10,6 +10,7 @@ ID，并在短时漏检时用运动模型补全轨迹。场地坐标投影暂不
 
 - 单帧 0-N 个球检测，支持 PyTorch/Ultralytics 和无 Torch 的 ONNX Runtime 后端。
 - 多球独立 ID、两级置信度关联、卡尔曼预测、短时漏检补点和超时重捕获。
+- 球框去重、运动确认、静止轨迹休眠和最大位移约束；有效球数量自动决定。
 - 观测轨迹与预测轨迹使用不同可视化，JSONL 保留每帧完整检测和跟踪结果。
 - 清洗后的 23,007 张检测数据，以及独立的训练、验证、测试视频片段划分。
 - 模型训练、导出、精度回归、板端运行时基准和自动化单元测试。
@@ -27,6 +28,19 @@ python -m pip install -r requirements-training.txt
 ```powershell
 python apps/track_video.py --config configs/tracking.yaml
 ```
+
+批量处理文件夹内的视频：
+
+```powershell
+python apps/track_video.py `
+  --config configs/tracking.yaml `
+  --input data/sideview_raw `
+  --output-dir outputs/sideview_results `
+  --skip-existing
+```
+
+默认处理输入目录第一层的 MP4、MOV、AVI、MKV 和 M4V 文件。增加 `--recursive` 可处理子目录；
+输出会自动命名为 `<原文件名>_tracked.mp4` 和 `<原文件名>_tracking.jsonl`。
 
 运行板端 ONNX 配置：
 
@@ -59,6 +73,7 @@ legacy/handoff_projection/    只读交接归档，不参与构建、测试或�
 - [架构说明](docs/ARCHITECTURE.md)
 - [当前推进方案](docs/NEXT_STEPS.md)
 - [训练与评估](docs/TRAINING.md)
+- [跟踪约束与调参](docs/TRACKING_RULES.md)
 - [板端部署](docs/DEPLOYMENT.md)
 - [开发维护规范](docs/DEVELOPMENT.md)
 - [项目路线图](docs/ROADMAP.md)

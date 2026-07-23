@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from src.tracking.ball_detector import BallDetector
-from src.tracking.ball_pipeline import BallTrackingPipeline
+from src.tracking.ball_pipeline import BallTrackingPipeline, deduplicate_ball_detections
 from src.tracking.multi_ball_tracker import MultiBallTracker
 from src.tracking.types import BallDetection
 
@@ -19,6 +19,15 @@ class FakeDetector(BallDetector):
 
 
 class BallTrackingPipelineTest(unittest.TestCase):
+    def test_deduplicates_nested_boxes_for_the_same_ball(self):
+        strongest = BallDetection([90, 90, 110, 110], [100, 100], 0.9, "fake")
+        nested = BallDetection([94, 94, 106, 106], [100, 100], 0.7, "fake")
+        separate = BallDetection([190, 90, 210, 110], [200, 100], 0.8, "fake")
+
+        result = deduplicate_ball_detections([nested, separate, strongest])
+
+        self.assertEqual(result, [strongest, separate])
+
     def test_detector_interval_uses_prediction_between_detector_frames(self):
         detector = FakeDetector()
         pipeline = BallTrackingPipeline(

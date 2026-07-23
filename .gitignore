@@ -7,7 +7,9 @@ venv/
 
 outputs/*
 !outputs/.gitkeep
-data/
+!outputs/README.md
+data/*
+!data/README.md
 artifacts/training/
 artifacts/benchmarks/
 artifacts/models/*.onnx

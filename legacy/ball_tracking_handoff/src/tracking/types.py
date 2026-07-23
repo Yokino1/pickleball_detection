@@ -128,7 +128,6 @@ class BallTrack:
         absent     ← no reliable ball position
     """
 
-    track_id: Optional[int] = None                # stable ID within one video/stream
     status: str = "absent"                       # "observed" | "predicted" | "absent"
     center: Optional[list[float]] = None          # [cx, cy] in image pixels
     bbox: Optional[list[float]] = None            # [x1, y1, x2, y2] in image pixels
@@ -137,15 +136,9 @@ class BallTrack:
     missing_frames: int = 0                       # consecutive frames without detection
     source: str = "none"                          # "detector" | "prediction" | "none"
     roi: Optional[list[float]] = None             # [x1, y1, x2, y2] suggested search region
-    age: int = 0                                  # frames since this track was created
-    hits: int = 0                                 # accepted detector observations
-    confirmed: bool = False                       # enough observations to trust this track
-    motion_confirmed: bool = False                # observed displacement exceeded the motion threshold
-    stationary_frames: int = 0                    # consecutive observed frames below motion threshold
 
     def to_dict(self) -> dict:
         return {
-            "track_id": _sanitize(self.track_id) if self.track_id is not None else None,
             "status": self.status,
             "center": _sanitize(self.center) if self.center is not None else None,
             "bbox": _sanitize(self.bbox) if self.bbox is not None else None,
@@ -154,11 +147,6 @@ class BallTrack:
             "missing_frames": _sanitize(self.missing_frames),
             "source": self.source,
             "roi": _sanitize(self.roi) if self.roi is not None else None,
-            "age": _sanitize(self.age),
-            "hits": _sanitize(self.hits),
-            "confirmed": self.confirmed,
-            "motion_confirmed": self.motion_confirmed,
-            "stationary_frames": _sanitize(self.stationary_frames),
         }
 
 
@@ -180,7 +168,7 @@ class CourtInfo:
     visible_keypoints: list[int] = field(default_factory=list)
     homography_available: bool = False
     ball_court_xy: Optional[list[float]] = None   # [x, y] in court feet
-    ball_zone: Optional[str] = None               # Deprecated projection output; currently not computed.
+    ball_zone: Optional[str] = None               # zone label (see src/court/zones.py)
     projection_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -230,8 +218,6 @@ class FrameResult:
 
     # Ball
     ball_detections: list[BallDetection] = field(default_factory=list)
-    ball_tracks: list[BallTrack] = field(default_factory=list)
-    # Deprecated single-track view retained for legacy side-view consumers.
     ball_track: Optional[BallTrack] = None
 
     # Court
@@ -264,7 +250,6 @@ class FrameResult:
 
             # New fields
             "ball_detections": [d.to_dict() for d in self.ball_detections],
-            "ball_tracks": [track.to_dict() for track in self.ball_tracks],
             "ball_track": self.ball_track.to_dict() if self.ball_track else None,
             "court": self.court.to_dict() if self.court else None,
             "players": [p.to_dict() for p in self.players],

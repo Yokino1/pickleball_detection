@@ -11,13 +11,13 @@ from .types import BallTrack, FrameResult
 
 
 _PALETTE = (
-    (46, 204, 113),
-    (52, 152, 219),
-    (241, 196, 15),
-    (231, 76, 60),
-    (155, 89, 182),
-    (26, 188, 156),
-    (230, 126, 34),
+    (0, 255, 0),
+    (0, 255, 255),
+    (0, 165, 255),
+    (0, 0, 255),
+    (0, 210, 140),
+    (0, 120, 255),
+    (0, 255, 190),
 )
 
 
@@ -58,12 +58,9 @@ class TrackingOverlay:
         points = list(self._trails[track_id])
         colour = _PALETTE[(track_id - 1) % len(_PALETTE)]
         for index in range(1, len(points)):
-            x1, y1, predicted1 = points[index - 1]
-            x2, y2, predicted2 = points[index]
-            if predicted1 or predicted2:
-                self._draw_dashed_line(frame, (x1, y1), (x2, y2), colour)
-            else:
-                cv2.line(frame, (x1, y1), (x2, y2), colour, 2, cv2.LINE_AA)
+            x1, y1, _ = points[index - 1]
+            x2, y2, _ = points[index]
+            cv2.line(frame, (x1, y1), (x2, y2), colour, 2, cv2.LINE_AA)
 
     def _draw_track(self, frame: np.ndarray, track: BallTrack) -> None:
         track_id = track.track_id or 0
@@ -92,19 +89,6 @@ class TrackingOverlay:
             1,
             cv2.LINE_AA,
         )
-
-    @staticmethod
-    def _draw_dashed_line(frame, start, end, colour, dash_length: int = 6) -> None:
-        x1, y1 = start
-        x2, y2 = end
-        distance = max(1.0, float(np.hypot(x2 - x1, y2 - y1)))
-        steps = max(1, int(distance / dash_length))
-        for step in range(0, steps, 2):
-            t1 = step / steps
-            t2 = min(1.0, (step + 1) / steps)
-            p1 = (int(x1 + (x2 - x1) * t1), int(y1 + (y2 - y1) * t1))
-            p2 = (int(x1 + (x2 - x1) * t2), int(y1 + (y2 - y1) * t2))
-            cv2.line(frame, p1, p2, colour, 1, cv2.LINE_AA)
 
     @staticmethod
     def _draw_status(frame: np.ndarray, result: FrameResult) -> None:

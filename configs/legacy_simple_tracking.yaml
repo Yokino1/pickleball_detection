@@ -1,0 +1,27 @@
+camera:
+  source: data/sideview_raw/test.mp4
+
+models:
+  ball_model: artifacts/models/ball_best.pt
+  ball_class_id: 0
+  exclude_region: [0, 0, 120, 100]
+  player_model: null
+  imgsz: 960
+
+tracking:
+  min_conf: 0.25
+  max_jump_px: 180
+  max_predict_frames: 3
+  smoothing_window: 3
+  detector_interval: 1
+
+court:
+  enabled: false
+
+players:
+  enabled: false
+
+output:
+  save_jsonl: true
+  save_video: true
+  draw_overlay: true

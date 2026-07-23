@@ -37,6 +37,17 @@ def check_import_boundaries() -> list[str]:
     return errors
 
 
+def check_python_syntax() -> list[str]:
+    errors: list[str] = []
+    files = active_python_files() + [Path(__file__).resolve()]
+    for path in sorted(set(files)):
+        try:
+            compile(path.read_text(encoding="utf-8"), str(path), "exec")
+        except SyntaxError as exc:
+            errors.append(f"{path.relative_to(ROOT)} has invalid syntax: {exc}")
+    return errors
+
+
 def check_markdown_links() -> list[str]:
     errors: list[str] = []
     for path in sorted(ROOT.rglob("*.md")):
@@ -55,12 +66,12 @@ def check_markdown_links() -> list[str]:
 
 
 def main() -> int:
-    errors = check_import_boundaries() + check_markdown_links()
+    errors = check_python_syntax() + check_import_boundaries() + check_markdown_links()
     if errors:
         for error in errors:
             print(f"[reference-error] {error}", file=sys.stderr)
         return 1
-    print("[references] active imports and local Markdown links are valid")
+    print("[checks] Python syntax, active imports and local Markdown links are valid")
     return 0
 
 

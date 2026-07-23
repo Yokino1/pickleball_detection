@@ -6,6 +6,10 @@
 video frame
     |
     v
+CameraMotionEstimator
+    |-- sparse background optical flow
+    |-- RANSAC global translation
+    v
 BallDetector (PT or ONNX)
     |
     | 0-N BallDetection
@@ -13,6 +17,8 @@ BallDetector (PT or ONNX)
 MultiBallTracker
     |-- high-confidence association and track creation
     |-- low-confidence recovery for existing tracks
+    |-- camera-compensated motion confirmation
+    |-- impact/reversal recovery with bounded gap growth
     |-- per-track constant-velocity Kalman prediction
     |-- expiry and later re-identification with a new ID
     v
@@ -28,6 +34,7 @@ FrameResult.ball_tracks[]
 - `ball_detector.py`: detector protocol and Ultralytics implementation.
 - `onnx_detector.py`: Torch-free ONNX Runtime implementation and post-processing.
 - `multi_ball_tracker.py`: track lifecycle, association and motion prediction.
+- `camera_motion.py`: robust inter-frame camera translation estimation.
 - `ball_pipeline.py`: per-frame orchestration and timing diagnostics.
 - `types.py`: stable JSON-serializable contracts.
 - `overlay.py`: presentation only; it must not change tracking state.
@@ -41,6 +48,11 @@ FrameResult.ball_tracks[]
 5. A missed track remains visible as `predicted` for `max_predict_frames`.
 6. It remains internally recoverable until `max_missing_frames`, then expires.
 7. A later unmatched detection creates a new ID. No visual re-identification is currently claimed.
+
+The reference configuration also clusters duplicate ball boxes, requires motion in both raw and
+camera-compensated coordinates before exposing a new track, sleeps stationary tracks, recovers bounded
+impact/reversal jumps and rejects physically implausible displacement. All valid moving tracks are emitted;
+the number of balls is not configured manually.
 
 ## Supported boundary
 

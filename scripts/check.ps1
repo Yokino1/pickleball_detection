@@ -3,9 +3,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
-& $Python -m compileall -q src apps tools tests
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$env:PYTHONDONTWRITEBYTECODE = "1"
 
 & $Python tools/check_project_refs.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
