@@ -1,24 +1,24 @@
 schema_version: 1
 profile:
-  name: edge
+  name: temporal
   revision: 1
-  status: deployment
+  status: maintained
 
 input:
   source: data/reference/test_2.mp4
 
 detector:
-  backend: onnxruntime
-  model: artifacts/models/ball_best.onnx
+  backend: auto
+  model: artifacts/models/ball_best.pt
   ball_class_id: 0
-  imgsz: 640
+  imgsz: 960
   low_conf: 0.15
   iou_threshold: 0.50
-  max_detections: 24
+  max_detections: 32
   duplicate_iou_threshold: 0.20
   duplicate_center_scale: 0.75
   duplicate_center_px: 6.0
-  providers: null
+  device: null
   exclude_region: null
 
 tracker:
@@ -62,25 +62,25 @@ runtime:
   fail_on_detector_error: true
   temporal_motion:
     enabled: true
-    analysis_width: 480
+    analysis_width: 640
     difference_threshold: 18
     min_motion_fraction: 0.015
     region_scale: 1.5
-    min_region_radius_px: 7
+    min_region_radius_px: 8
     max_global_motion_fraction: 0.35
     blur_kernel: 5
     dilation_iterations: 2
   camera_motion:
     enabled: true
-    analysis_width: 480
-    max_corners: 200
-    min_inliers: 16
+    analysis_width: 640
+    max_corners: 300
+    min_inliers: 20
     max_shift_px: 80.0
     ransac_threshold_px: 2.5
 
 output:
-  video: outputs/experiments/single/edge/tracking_overlay.mp4
-  jsonl: outputs/experiments/single/edge/tracking.jsonl
+  video: outputs/experiments/single/temporal/tracking_overlay.mp4
+  jsonl: outputs/experiments/single/temporal/tracking.jsonl
   codec: mp4v
   trail_length: 10
   draw_raw_detections: false

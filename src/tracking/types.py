@@ -133,8 +133,11 @@ class BallTrack:
     center: Optional[list[float]] = None          # [cx, cy] in image pixels
     bbox: Optional[list[float]] = None            # [x1, y1, x2, y2] in image pixels
     confidence: float = 0.0
-    velocity: Optional[list[float]] = None        # [vx, vy] in pixels / frame
+    velocity: Optional[list[float]] = None        # [vx, vy] in image pixels / second
+    acceleration: Optional[list[float]] = None    # [ax, ay] in image pixels / second^2
+    motion_model: str = "constant_velocity"
     missing_frames: int = 0                       # consecutive frames without detection
+    missing_time_ms: float = 0.0                  # elapsed time without detection
     source: str = "none"                          # "detector" | "prediction" | "none"
     roi: Optional[list[float]] = None             # [x1, y1, x2, y2] suggested search region
     age: int = 0                                  # frames since this track was created
@@ -151,7 +154,14 @@ class BallTrack:
             "bbox": _sanitize(self.bbox) if self.bbox is not None else None,
             "confidence": _sanitize(self.confidence),
             "velocity": _sanitize(self.velocity) if self.velocity is not None else None,
+            "acceleration": (
+                _sanitize(self.acceleration)
+                if self.acceleration is not None
+                else None
+            ),
+            "motion_model": self.motion_model,
             "missing_frames": _sanitize(self.missing_frames),
+            "missing_time_ms": _sanitize(self.missing_time_ms),
             "source": self.source,
             "roi": _sanitize(self.roi) if self.roi is not None else None,
             "age": _sanitize(self.age),
@@ -207,6 +217,10 @@ class PlayerDetection:
     track_id: Optional[int] = None         # tracking ID if available
     confidence: float = 0.0
     foot_point: Optional[list[float]] = None  # [x, y] estimated foot position
+    eligible_player: bool = False
+    selection_score: float = 0.0
+    track_hits: int = 1
+    source: str = "unknown"
 
     def to_dict(self) -> dict:
         return {
@@ -214,6 +228,10 @@ class PlayerDetection:
             "track_id": _sanitize(self.track_id) if self.track_id is not None else None,
             "confidence": _sanitize(self.confidence),
             "foot_point": _sanitize(self.foot_point) if self.foot_point is not None else None,
+            "eligible_player": self.eligible_player,
+            "selection_score": _sanitize(self.selection_score),
+            "track_hits": self.track_hits,
+            "source": self.source,
         }
 
 

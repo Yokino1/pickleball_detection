@@ -10,26 +10,26 @@ import numpy as np
 from .types import BallTrack, FrameResult
 
 
-_PALETTE = (
-    (0, 255, 0),
-    (0, 255, 255),
-    (0, 165, 255),
-    (0, 0, 255),
-    (0, 210, 140),
-    (0, 120, 255),
-    (0, 255, 190),
-)
+_TRACK_COLOUR = (0, 255, 0)
 
 
 class TrackingOverlay:
-    def __init__(self, trail_length: int = 30, draw_raw_detections: bool = False):
+    def __init__(
+        self,
+        trail_length: int = 30,
+        draw_raw_detections: bool = False,
+        draw_players: bool = False,
+    ):
         self.trail_length = max(2, int(trail_length))
         self.draw_raw_detections = bool(draw_raw_detections)
+        self.draw_players = bool(draw_players)
         self._trails: dict[int, deque[tuple[int, int, bool]]] = defaultdict(
             lambda: deque(maxlen=self.trail_length)
         )
 
     def draw(self, frame: np.ndarray, result: FrameResult) -> np.ndarray:
+        if self.draw_players:
+            self._draw_players(frame, result)
         if self.draw_raw_detections:
             for detection in result.ball_detections:
                 x1, y1, x2, y2 = map(int, detection.bbox)
@@ -51,20 +51,45 @@ class TrackingOverlay:
         self._draw_status(frame, result)
         return frame
 
+    @staticmethod
+    def _draw_players(frame: np.ndarray, result: FrameResult) -> None:
+        for person in result.players:
+            x1, y1, x2, y2 = (int(round(value)) for value in person.bbox)
+            colour = (255, 220, 0) if person.eligible_player else (130, 130, 130)
+            thickness = 2 if person.eligible_player else 1
+            cv2.rectangle(frame, (x1, y1), (x2, y2), colour, thickness, cv2.LINE_AA)
+            role = "player" if person.eligible_player else "person"
+            label = f"{role} {person.track_id or 0}"
+            cv2.putText(
+                frame,
+                label,
+                (x1, max(16, y1 - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.42,
+                colour,
+                1,
+                cv2.LINE_AA,
+            )
+
     def reset(self) -> None:
         self._trails.clear()
 
     def _draw_trail(self, frame: np.ndarray, track_id: int) -> None:
         points = list(self._trails[track_id])
-        colour = _PALETTE[(track_id - 1) % len(_PALETTE)]
         for index in range(1, len(points)):
             x1, y1, _ = points[index - 1]
             x2, y2, _ = points[index]
-            cv2.line(frame, (x1, y1), (x2, y2), colour, 2, cv2.LINE_AA)
+            cv2.line(
+                frame,
+                (x1, y1),
+                (x2, y2),
+                _TRACK_COLOUR,
+                2,
+                cv2.LINE_AA,
+            )
 
     def _draw_track(self, frame: np.ndarray, track: BallTrack) -> None:
         track_id = track.track_id or 0
-        colour = _PALETTE[(track_id - 1) % len(_PALETTE)]
         cx, cy = int(round(track.center[0])), int(round(track.center[1]))
         if track.bbox:
             x1, y1, x2, y2 = (int(round(value)) for value in track.bbox)
@@ -72,20 +97,27 @@ class TrackingOverlay:
         else:
             radius = 7
         if track.status == "observed":
-            cv2.circle(frame, (cx, cy), radius, colour, 2, cv2.LINE_AA)
-            cv2.circle(frame, (cx, cy), 2, colour, -1, cv2.LINE_AA)
+            cv2.circle(frame, (cx, cy), radius, _TRACK_COLOUR, 2, cv2.LINE_AA)
+            cv2.circle(frame, (cx, cy), 2, _TRACK_COLOUR, -1, cv2.LINE_AA)
             label = f"ID {track_id} {track.confidence:.0%}"
         else:
-            cv2.circle(frame, (cx, cy), radius, colour, 1, cv2.LINE_AA)
-            cv2.drawMarker(frame, (cx, cy), colour, cv2.MARKER_CROSS, 8, 1)
-            label = f"ID {track_id} pred {track.missing_frames}f"
+            cv2.circle(frame, (cx, cy), radius, _TRACK_COLOUR, 1, cv2.LINE_AA)
+            cv2.drawMarker(
+                frame,
+                (cx, cy),
+                _TRACK_COLOUR,
+                cv2.MARKER_CROSS,
+                8,
+                1,
+            )
+            label = f"ID {track_id} pred {track.missing_time_ms:.0f}ms"
         cv2.putText(
             frame,
             label,
             (cx + radius + 5, max(16, cy - radius - 3)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.42,
-            colour,
+            _TRACK_COLOUR,
             1,
             cv2.LINE_AA,
         )

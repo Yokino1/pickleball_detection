@@ -1,29 +1,31 @@
 schema_version: 1
 profile:
-  name: edge
+  name: physics
   revision: 1
-  status: deployment
+  status: maintained
 
 input:
   source: data/reference/test_2.mp4
 
 detector:
-  backend: onnxruntime
-  model: artifacts/models/ball_best.onnx
+  backend: auto
+  model: artifacts/models/ball_best.pt
   ball_class_id: 0
-  imgsz: 640
-  low_conf: 0.15
+  imgsz: 960
+  #min for detection
+  low_conf: 0.12
   iou_threshold: 0.50
-  max_detections: 24
+  max_detections: 32
   duplicate_iou_threshold: 0.20
   duplicate_center_scale: 0.75
   duplicate_center_px: 6.0
-  providers: null
+  device: null
   exclude_region: null
 
 tracker:
-  high_conf: 0.25
-  low_conf: 0.15
+#the area for trackering
+  high_conf: 0.2
+  low_conf: 0.12
   min_hits: 2
   max_prediction_ms: 120.0
   max_missing_ms: 350.0
@@ -40,20 +42,37 @@ tracker:
   max_stationary_ms: 1500.0
   unconfirmed_max_ms: 1500.0
   max_output_tracks: 1
+
   impact_recovery_gate_px: 260.0
   impact_recovery_min_speed_px_per_second: 300.0
   impact_recovery_min_missing_ms: 20.0
-  max_flight_direction_change_deg: 75.0
+  #60~75
+  max_flight_direction_change_deg: 60.0
   direction_gate_min_speed_px_per_second: 250.0
   direction_gate_min_hits: 3
-  prediction_min_confidence: 0.15
+
+  motion_model: constant_acceleration
+  process_noise: 1200.0
+  acceleration_process_noise: 3000.0
+  measurement_noise: 4.0
+  constant_acceleration_min_observations: 4
+  max_acceleration_px_per_second2: 12000.0
+  acceleration_decay: 0.70
+
+  use_nis_gate: true
+  #10.75~13.82
+  nis_gate_threshold: 10.75
+  nis_gate_min_hits: 4
+  max_observed_acceleration_px_per_second2: 16000.0
+  acceleration_gate_min_hits: 4
+
+  prediction_min_confidence: 0.12
   fast_prediction_speed_px_per_second: 800.0
   fast_max_prediction_ms: 60.0
+  continuous_prediction_horizon: true
   prediction_velocity_decay: 0.90
   min_motion_speed_px_per_second: 16.0
   confidence_decay: 0.82
-  process_noise: 1200.0
-  measurement_noise: 4.0
   max_tracks: 32
   emit_tentative: false
 
@@ -62,25 +81,27 @@ runtime:
   fail_on_detector_error: true
   temporal_motion:
     enabled: true
-    analysis_width: 480
-    difference_threshold: 18
-    min_motion_fraction: 0.015
+    analysis_width: 640
+    #15~18
+    difference_threshold: 15
+    #0.010~0.015
+    min_motion_fraction: 0.010
     region_scale: 1.5
-    min_region_radius_px: 7
+    min_region_radius_px: 8
     max_global_motion_fraction: 0.35
     blur_kernel: 5
     dilation_iterations: 2
   camera_motion:
     enabled: true
-    analysis_width: 480
-    max_corners: 200
-    min_inliers: 16
+    analysis_width: 640
+    max_corners: 300
+    min_inliers: 20
     max_shift_px: 80.0
     ransac_threshold_px: 2.5
 
 output:
-  video: outputs/experiments/single/edge/tracking_overlay.mp4
-  jsonl: outputs/experiments/single/edge/tracking.jsonl
+  video: outputs/experiments/single/physics/tracking_overlay.mp4
+  jsonl: outputs/experiments/single/physics/tracking.jsonl
   codec: mp4v
   trail_length: 10
   draw_raw_detections: false

@@ -1,92 +1,111 @@
 # Pickleball Detection and Tracking
 
-本项目的当前主线是：在任意常见机位的视频中检测一个或多个 Pickleball，为每个球维护稳定
-ID，并在短时漏检时用运动模型补全轨迹。场地坐标投影暂不属于主流程。
+当前项目目标是优先提高单个 Pickleball 的检测和追踪效果。主流程对视频逐帧检测球，
+维护一个主要输出 ID，在短时漏检时做保守预测，并输出带轨迹 MP4 和逐帧 JSONL。
+球场二维投影和三维坐标不属于当前主流程。
 
-当前工作原则是先用真实侧拍视频验收继承模型，再根据漏检、误检、轨迹中断或板端性能问题
-决定是否微调。现阶段不以重复训练后方视角公开数据作为默认动作。
+## 保留版本
 
-## 当前能力
+项目只维护三套桌面检测追踪配置：
 
-- 单帧 0-N 个球检测，支持 PyTorch/Ultralytics 和无 Torch 的 ONNX Runtime 后端。
-- 多球独立 ID、两级置信度关联、卡尔曼预测、短时漏检补点和超时重捕获。
-- 球框去重、运动确认、静止轨迹休眠和最大位移约束；有效球数量自动决定。
-- 观测轨迹与预测轨迹使用不同可视化，JSONL 保留每帧完整检测和跟踪结果。
-- 清洗后的 23,007 张检测数据，以及独立的训练、验证、测试视频片段划分。
-- 模型训练、导出、精度回归、板端运行时基准和自动化单元测试。
+| 版本 | 配置 | 运行脚本 | 用途 |
+| --- | --- | --- | --- |
+| 主线 | `configs/tracking.yaml` | `scripts/run_mainline_tracking.cmd` | 单帧 YOLO + CV Kalman + 相机补偿和关联约束 |
+| 连续帧 | `configs/tracking_temporal.yaml` | `scripts/run_temporal_tracking.cmd` | 主线 + 轻量相邻帧运动证据过滤 |
+| 物理约束 | `configs/tracking_physics.yaml` | `scripts/run_physics_tracking.cmd` | 连续帧 + CA Kalman + NIS/加速度约束 |
 
-## 快速开始
+三套版本共用 `apps/track_video.py` 和 `src/tracking`，不存在三份相互复制的追踪代码。
+`configs/tracking_edge.yaml` 仅作为后续板端 ONNX 部署配置保留，不属于桌面 A/B 三版本。
 
-安装桌面训练环境：
+另有一条不替代上述三版的实验分支：
 
-```powershell
-python -m pip install -r requirements-training.txt
+| 实验分支 | 配置 | 运行脚本 | 用途 |
+| --- | --- | --- | --- |
+| 人体接触门控 | `configs/tracking_person_contact.yaml` | `scripts/run_person_contact_tracking.cmd` | Physics + 每 5 帧人体检测 + 比赛人员筛选 + 击球恢复接触门控 |
+
+详细差异见 [版本说明](docs/VERSIONS.md)。
+
+## 直接运行
+
+在 Conda CMD 中进入项目目录：
+
+```bat
+cd /d D:\ball\ball_tracking_handoff\ball_tracking_handoff
 ```
 
-运行当前 PyTorch 模型：
+然后选择一版：
 
-```powershell
-python apps/track_video.py --config configs/tracking.yaml
+```bat
+scripts\run_mainline_tracking.cmd
+scripts\run_temporal_tracking.cmd
+scripts\run_physics_tracking.cmd
+scripts\run_person_contact_tracking.cmd
 ```
 
-批量处理文件夹内的视频：
+这些脚本默认处理 `data\sideview_raw` 中现有的全部视频，分别输出到：
 
-```powershell
-python apps/track_video.py `
-  --config configs/tracking.yaml `
-  --input data/sideview_raw `
-  --output-dir outputs/sideview_results `
-  --skip-existing
+```text
+outputs\experiments\desktop_ab\mainline
+outputs\experiments\desktop_ab\temporal
+outputs\experiments\desktop_ab\physics
+outputs\experiments\person_contact\current
 ```
 
-默认处理输入目录第一层的 MP4、MOV、AVI、MKV 和 M4V 文件。增加 `--recursive` 可处理子目录；
-输出会自动命名为 `<原文件名>_tracked.mp4` 和 `<原文件名>_tracking.jsonl`。
+每个视频生成：
 
-运行板端 ONNX 配置：
-
-```powershell
-python -m pip install -r requirements-runtime.txt
-python apps/track_video.py --config configs/tracking_edge.yaml
+```text
+<video>_tracked.mp4
+<video>_tracking.jsonl
 ```
 
-输出默认写入 `outputs/tracking_overlay.mp4` 和 `outputs/tracking.jsonl`。预测点标记为
-`pred Nf`，表示已经连续 N 帧没有检测框、当前位置来自运动预测。
+当前默认只输出一个评分最高的运动球轨迹，轨迹、检测圈、预测圈和标签统一使用荧光绿色。
 
 ## 项目结构
 
 ```text
-apps/                         可执行入口
-  track_video.py              当前主入口：检测 + 多球跟踪
-configs/                      可版本化运行配置
-src/tracking/                 检测、关联、预测、结果结构和可视化
-tools/                        数据、训练、导出、验证和基准工具
-tests/                        不依赖模型文件的核心算法测试
-datasets/                     原始数据与清洗后训练数据
-artifacts/                    模型、训练结果和基准报告
-docs/                         架构、训练、部署、维护和路线图
-outputs/                      本地运行输出，不提交版本库
-legacy/handoff_projection/    只读交接归档，不参与构建、测试或发布
+apps/                 单视频与同步双摄 CLI 入口
+configs/              正式、实验和板端 profile
+src/tracking/         检测、关联、预测和公共装配
+src/tracking/dual_camera/  双摄同步、协调、渲染和产物管理
+src/runtime/          未来机器人实时采集、同步和推理调度边界
+scripts/              三版本 CMD 与项目检查脚本
+tests/                核心算法回归测试
+docs/                 版本、规则、架构、训练和部署文档
+experiments/          可提交的实验元数据，不保存大文件
+data/                 本地测试视频，不提交 Git
+datasets/             本地训练数据，不提交大文件
+artifacts/models/     本地模型，不提交权重
+outputs/              本地运行结果，不提交 Git
+legacy/               原始交接代码参考，不被主流程导入
 ```
 
 ## 文档入口
 
-- [架构说明](docs/ARCHITECTURE.md)
-- [当前推进方案](docs/NEXT_STEPS.md)
-- [训练与评估](docs/TRAINING.md)
-- [跟踪约束与调参](docs/TRACKING_RULES.md)
+- [三个版本说明](docs/VERSIONS.md)
+- [追踪规则与参数](docs/TRACKING_RULES.md)
+- [物理约束方案](docs/Physics_EKF_Pickleball_Tracking.md)
+- [人体接触门控与透视补偿方案](docs/PERSON_CONTACT_PERSPECTIVE_TRACKING.md)
+- [当前架构](docs/ARCHITECTURE.md)
+- [下一步工作](docs/NEXT_STEPS.md)
+- [训练流程](docs/TRAINING.md)
 - [板端部署](docs/DEPLOYMENT.md)
-- [开发维护规范](docs/DEVELOPMENT.md)
-- [项目路线图](docs/ROADMAP.md)
-- [数据说明](datasets/README.md)
-- [遗留代码说明](legacy/handoff_projection/README.md)
+- [开发维护](docs/DEVELOPMENT.md)
+- [长期维护与输出规范](docs/MAINTENANCE.md)
+- [双摄 60 FPS 板端架构决策](docs/decisions/0002-dual-camera-60fps-edge-runtime.md)
 - [变更记录](CHANGELOG.md)
+
+同步双半场实验使用 `apps/track_dual_halves.py`。公共组件装配位于
+`src/tracking/factory.py`，每个双摄 run 自动生成 manifest。未来输出按
+`production / experiments / smoke / previews` 分类，具体见
+[outputs/README.md](outputs/README.md)。
+
+最终机器人目标是两个独立半场摄像头、每路 60 FPS。当前双视频入口是离线
+回归工具，不是实时采集实现；候选板卡按 RK3588S 级硬件规划，准确 SKU 待确认。
 
 ## 当前边界
 
-- 现有公开数据主要是离散检测图片，不能可靠计算 IDF1/HOTA；正式跟踪指标需要补充带
-  `track_id` 的连续视频测试集。
-- 最终推理格式取决于板卡。ONNX Runtime 是通用基线，NVIDIA、Rockchip、Intel 等平台应在
-  确认硬件后切换对应加速后端。
-- 继承权重是单类别检测模型，YOLO 本身支持一帧输出多个球；正式多球效果仍需用真实侧拍连续
-  视频验证，不能只根据训练集数量下结论。
-- 旧场地投影分支已归档，不属于支持范围，也不能被主线代码引用。
+- 检测模型持续漏检时，追踪器只能补极短时间，不能凭空恢复球。
+- 当前 physics 版本使用二维像素空间加速度，不使用真实 `9.81 m/s^2` 重力。
+- 真实重力、空气阻力和三维轨迹需要相机标定及双目或其他深度来源。
+- 主流程不得导入 `legacy`。
+- 视频、数据集、权重、导出模型和输出结果不得随意提交 Git。

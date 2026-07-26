@@ -6,6 +6,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_DIRS = ("apps", "src", "tools", "tests")
@@ -18,6 +20,7 @@ FORBIDDEN_IMPORTS = (
     "legacy.handoff_projection",
 )
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
+CONFIG_STATUSES = {"maintained", "experimental", "deployment"}
 
 
 def active_python_files() -> list[Path]:
@@ -34,6 +37,15 @@ def check_import_boundaries() -> list[str]:
         for token in FORBIDDEN_IMPORTS:
             if token in text:
                 errors.append(f"{path.relative_to(ROOT)} imports archived module token {token!r}")
+        relative = path.relative_to(ROOT)
+        if relative.parts[0] in {"src", "tools"} and (
+            "from apps" in text or "import apps" in text
+        ):
+            errors.append(f"{relative} imports an application entry point")
+        if relative.parts[0] == "apps" and (
+            "from apps." in text or "import apps." in text
+        ):
+            errors.append(f"{relative} imports another application entry point")
     return errors
 
 
@@ -65,8 +77,56 @@ def check_markdown_links() -> list[str]:
     return errors
 
 
+def check_config_profiles() -> list[str]:
+    errors: list[str] = []
+    names: dict[str, Path] = {}
+    for path in sorted((ROOT / "configs").glob("tracking*.yaml")):
+        config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        profile = config.get("profile")
+        if not isinstance(profile, dict):
+            errors.append(f"{path.relative_to(ROOT)} has no profile metadata")
+            continue
+        name = profile.get("name")
+        revision = profile.get("revision")
+        status = profile.get("status")
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"{path.relative_to(ROOT)} has invalid profile.name")
+        elif name in names:
+            errors.append(
+                f"{path.relative_to(ROOT)} duplicates profile.name from "
+                f"{names[name].relative_to(ROOT)}"
+            )
+        else:
+            names[name] = path
+        if not isinstance(revision, int) or revision < 1:
+            errors.append(f"{path.relative_to(ROOT)} has invalid profile.revision")
+        if status not in CONFIG_STATUSES:
+            errors.append(f"{path.relative_to(ROOT)} has invalid profile.status")
+    return errors
+
+
+def check_maintenance_files() -> list[str]:
+    required = (
+        ROOT / "configs" / "README.md",
+        ROOT / "docs" / "MAINTENANCE.md",
+        ROOT / "experiments" / "README.md",
+        ROOT / "outputs" / "README.md",
+    )
+    return [
+        f"missing required maintenance file {path.relative_to(ROOT)}"
+        for path in required
+        if not path.exists()
+    ]
+
+
 def main() -> int:
-    errors = check_python_syntax() + check_import_boundaries() + check_markdown_links()
+    errors = (
+        check_python_syntax()
+        + check_import_boundaries()
+        + check_markdown_links()
+        + check_config_profiles()
+        + check_maintenance_files()
+    )
     if errors:
         for error in errors:
             print(f"[reference-error] {error}", file=sys.stderr)

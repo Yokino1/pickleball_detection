@@ -1,0 +1,32 @@
+schema_version: 1
+experiment_id: dual_camera_phase23
+status: smoke_validated
+owner: detection_tracking
+config:
+  profile: person_contact_dual_camera
+  revision: 2
+hypothesis:
+  - A net-bound trajectory can activate a short receiving-camera ROI without merging camera coordinates.
+  - Consecutive high-speed motion blobs can assist short YOLO gaps when constrained to an activated ROI.
+changes:
+  - synchronized two-camera global single-ball arbitration
+  - receiving-side ROI YOLO retry
+  - conservative fast-motion proposals
+  - maximum two eligible players per half
+validation:
+  date: 2026-07-25
+  unit_tests: 47
+  smoke_input: full_clean
+  smoke_frames: 30
+  handoff_alert_frames: 15
+  roi_retry_frames: 3
+  fast_motion_proposal_frames: 0
+limitations:
+  - Fast-motion proposals were covered synthetically but did not activate in the 30-frame real smoke.
+  - Camera coordinates are independent; no calibrated cross-camera position mapping is claimed.
+  - Two-dimensional person boxes do not prove paddle contact.
+promotion_gate:
+  - fixed handoff clips with ground-truth cross-camera transitions
+  - fast-ball YOLO-miss clips with false-positive review
+  - non-ball fast-motion negatives
+  - board latency and memory benchmark

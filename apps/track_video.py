@@ -9,75 +9,23 @@ import time
 from pathlib import Path
 
 import cv2
-import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.tracking.ball_detector import NullBallDetector, YoloBallDetector
-from src.tracking.ball_pipeline import BallTrackingPipeline
-from src.tracking.camera_motion import CameraMotionEstimator
-from src.tracking.multi_ball_tracker import MultiBallTracker
-from src.tracking.onnx_detector import OnnxBallDetector
 from src.tracking.overlay import TrackingOverlay
+from src.tracking.factory import (
+    build_detector,
+    build_person_detector,
+    build_pipeline,
+    load_config,
+    project_path,
+)
 
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
-
-
-def project_path(value: str | Path) -> Path:
-    path = Path(value)
-    return path if path.is_absolute() else PROJECT_ROOT / path
-
-
-def load_config(path: Path) -> dict:
-    with path.open("r", encoding="utf-8") as handle:
-        config = yaml.safe_load(handle) or {}
-    if config.get("schema_version") != 1:
-        raise ValueError("Config must declare schema_version: 1")
-    return config
-
-
-def build_detector(config: dict):
-    detector_config = config.get("detector", {})
-    model_value = detector_config.get("model")
-    backend = str(detector_config.get("backend", "auto")).lower()
-    if backend == "null" or model_value in (None, "null"):
-        return NullBallDetector()
-
-    model_path = project_path(model_value)
-    if not model_path.exists():
-        raise FileNotFoundError(f"Detector model does not exist: {model_path}")
-    if backend == "auto":
-        backend = "onnxruntime" if model_path.suffix.lower() == ".onnx" else "ultralytics"
-
-    common = {
-        "model_path": model_path,
-        "ball_class_id": detector_config.get("ball_class_id", 0),
-        "conf_threshold": detector_config.get("low_conf", 0.08),
-        "iou_threshold": detector_config.get("iou_threshold", 0.5),
-        "imgsz": detector_config.get("imgsz", 640),
-        "max_detections": detector_config.get("max_detections", 32),
-        "exclude_region": detector_config.get("exclude_region"),
-    }
-    if backend == "onnxruntime":
-        return OnnxBallDetector(providers=detector_config.get("providers"), **common)
-    if backend == "ultralytics":
-        return YoloBallDetector(device=detector_config.get("device"), **common)
-    raise ValueError(f"Unsupported detector backend: {backend}")
-
-
-def build_tracker(config: dict) -> MultiBallTracker:
-    values = dict(config.get("tracker", {}))
-    return MultiBallTracker(**values)
-
-
-def build_camera_motion_estimator(config: dict) -> CameraMotionEstimator | None:
-    values = dict(config.get("runtime", {}).get("camera_motion", {}))
-    enabled = bool(values.pop("enabled", False))
-    return CameraMotionEstimator(**values) if enabled else None
 
 
 def discover_videos(input_path: Path, recursive: bool = False) -> list[Path]:
@@ -130,6 +78,7 @@ def run_video(
     start_frame: int = 0,
     max_frames: int | None = None,
     preview: bool = False,
+    person_detector=None,
 ) -> int:
     """Process one video while allowing the detector model to be reused."""
     output_config = config.get("output", {})
@@ -142,19 +91,17 @@ def run_video(
     total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     capture.set(cv2.CAP_PROP_POS_FRAMES, max(0, start_frame))
 
-    tracker = build_tracker(config)
-    pipeline = BallTrackingPipeline(
+    person_config = config.get("runtime", {}).get("person_detection", {})
+    pipeline = build_pipeline(
+        config,
+        fps,
         detector,
-        tracker,
-        detector_interval=config.get("runtime", {}).get("detector_interval", 1),
-        duplicate_iou_threshold=config.get("detector", {}).get("duplicate_iou_threshold", 0.20),
-        duplicate_center_scale=config.get("detector", {}).get("duplicate_center_scale", 0.75),
-        duplicate_center_px=config.get("detector", {}).get("duplicate_center_px", 6.0),
-        camera_motion_estimator=build_camera_motion_estimator(config),
+        person_detector=person_detector,
     )
     overlay = TrackingOverlay(
         trail_length=output_config.get("trail_length", 30),
         draw_raw_detections=output_config.get("draw_raw_detections", False),
+        draw_players=output_config.get("draw_players", False),
     )
 
     writer = None
@@ -171,7 +118,15 @@ def run_video(
         jsonl_handle = output_jsonl.open("w", encoding="utf-8")
 
     print(f"[input] {input_path} ({width}x{height}, {fps:.2f} fps, {total_frames} frames)")
-    print(f"[pipeline] detector={type(detector).__name__}, tracker={type(tracker).__name__}")
+    print(
+        f"[pipeline] detector={type(detector).__name__}, "
+        f"tracker={type(pipeline.tracker).__name__}"
+    )
+    if person_detector is not None:
+        print(
+            f"[person] detector={type(person_detector).__name__}, "
+            f"interval={person_config.get('interval_frames', 5)} frames"
+        )
     started = time.perf_counter()
     processed = 0
     frame_index = max(0, start_frame)
@@ -188,6 +143,12 @@ def run_video(
                 and config.get("runtime", {}).get("fail_on_detector_error", True)
             ):
                 raise RuntimeError("Detector failed; stopping instead of writing misleading output")
+            if (
+                result.diagnostics["person_detector_error"]
+                and person_config.get("fail_on_error", True)
+            ):
+                error = getattr(person_detector, "last_error", "unknown error")
+                raise RuntimeError(f"Person detector failed: {error}")
             if jsonl_handle is not None:
                 jsonl_handle.write(json.dumps(result.to_dict(), ensure_ascii=False) + "\n")
             if writer is not None or preview:
@@ -235,6 +196,7 @@ def main() -> int:
         raise FileNotFoundError(f"No supported videos found in: {input_path}")
 
     detector = build_detector(config)
+    person_detector = build_person_detector(config)
     output_config = config.get("output", {})
     if input_path.is_file():
         video_value = args.output or output_config.get("video")
@@ -250,6 +212,7 @@ def main() -> int:
             start_frame=args.start_frame,
             max_frames=args.max_frames,
             preview=args.preview,
+            person_detector=person_detector,
         )
 
     if args.output or args.jsonl:
@@ -277,6 +240,7 @@ def main() -> int:
                 start_frame=args.start_frame,
                 max_frames=args.max_frames,
                 preview=args.preview,
+                person_detector=person_detector,
             )
             if code != 0:
                 raise RuntimeError(f"processing returned exit code {code}")
@@ -284,7 +248,11 @@ def main() -> int:
         except Exception as exc:
             failures.append((video_path, str(exc)))
             print(f"[failed] {video_path}: {exc}", file=sys.stderr)
-            if args.fail_fast or getattr(detector, "disabled", False):
+            if (
+                args.fail_fast
+                or getattr(detector, "disabled", False)
+                or getattr(person_detector, "disabled", False)
+            ):
                 break
 
     print(
