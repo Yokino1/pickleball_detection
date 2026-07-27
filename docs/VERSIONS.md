@@ -1,154 +1,108 @@
 # 检测追踪版本说明
 
-## 共同能力
+## 当前正式版本
 
-三个版本使用同一个入口和同一套核心代码：
-
-- Ultralytics PT 或 ONNX Runtime 球检测；
-- 检测框去重；
-- 相机全局平移补偿；
-- 基于实际时间的 `px/s` 速度；
-- 按参考分辨率缩放门控参数；
-- 单个主要输出轨迹；
-- 静止误检抑制；
-- 方向突变和 impact recovery；
-- 普通球最长 120ms、高速球最短 60ms 的短时预测；
-- 荧光绿色实线轨迹；
-- MP4 和 JSONL 输出。
-
-## 主线
-
-配置：`configs/tracking.yaml`
-
-脚本：`scripts/run_mainline_tracking.cmd`
-
-输出：`outputs/experiments/desktop_ab/mainline`
-
-主线使用单帧 YOLO 和四状态常速度 Kalman：
+当前唯一活动正式版本：
 
 ```text
-[x, y, vx, vy]
+配置：configs/tracking.yaml
+Profile：pickleball_tracking
+Revision：9
+状态：maintained
+正式入口：apps/track_dual_halves.py
+辅助单路诊断：apps/track_video.py
+运行方式：命令直接粘贴到 Conda CMD，不生成运行批处理
 ```
 
-它不启用连续帧运动过滤，也不估计加速度。该版本用于判断仅依靠检测、相机补偿和基础关联约束时的效果。
+revision 9 的核心原则仍是：
 
-## 轻量连续帧
+> 可靠模型观测优先；只有当前没有可靠模型观测时，预测和辅助候选才补位。
 
-配置：`configs/tracking_temporal.yaml`
+这里的“可靠模型观测”不是原始 YOLO 框，而是已经通过检测阈值、去重、当前
+时序过滤和本地 tracker 关联/确认的 YOLO 或 ONNX observed 轨迹。原始模型框
+仍可能在进入该优先级之前被过滤或拒绝，具体诊断顺序见
+[`TRACKING_RULES.md`](TRACKING_RULES.md)。
 
-脚本：`scripts/run_temporal_tracking.cmd`
+当前正式版本包含：
 
-输出：`outputs/experiments/desktop_ab/temporal`
+- 球 YOLO/PT 或 ONNX Runtime 检测；
+- 成对裁切视频按左右总宽度自动恢复原视频物理尺度；
+- 检测框去重和相机全局平移补偿；
+- 相邻帧局部运动证据；
+- 常加速度 Kalman；
+- 基于真实时间戳的速度、方向、NIS 和加速度门控；
+- 连续邻近且原始方向一致的主模型观测可纠正滞后的 Kalman 状态；
+- 仅针对邻近落地点主模型观测的受限下落到上升反弹恢复；
+- 高速球 60–120 ms 自适应短预测；
+- 运动确认和静止轨迹抑制；
+- 每 5 帧人体检测与中间帧人体框延续；
+- eligible player 筛选和人体接触门控；
+- 左右独立本地 tracker；
+- 模型观测优先的全局单球协调；
+- 球网入口 ROI、受限 `fast_motion` 和严格辅助 handoff；
+- 球网出口越界预测抑制和跨侧尾迹清理；
+- 本地 ID 变化或显示位置物理不连续时切断尾迹，但保留当前模型观测；
+- MP4、左右/全局 JSONL 与运行 manifest。
 
-该版本在主线前增加 `TemporalMotionFilter`：
+正式入口对左右半场各运行一套本地 pipeline，再执行全局单球协调。单视频入口
+只用于拆分问题和检查某一侧 JSONL；它会忽略双摄协调步骤，不作为当前正式版本
+的独立运行形态。
 
-1. 将上一帧按相机运动估计对齐到当前帧。
-2. 计算低分辨率灰度帧差。
-3. 检查每个 YOLO 候选附近的局部运动比例。
-4. 固定灯光、标牌和 overlay 没有运动证据时不送入追踪器。
-5. 第一帧或全画面剧烈变化时失效开放，避免整帧漏检。
-
-该方案不改变检测模型输入，也不能找回 YOLO 完全没有检测到的高速球。
-
-## Physics Tracking
-
-配置：`configs/tracking_physics.yaml`
-
-脚本：`scripts/run_physics_tracking.cmd`
-
-输出：`outputs/experiments/desktop_ab/physics`
-
-该版本在连续帧方案基础上启用六状态常加速度 Kalman：
+## 当前判定优先级
 
 ```text
-[x, y, vx, vy, ax, ay]
+当前活动侧可靠 YOLO/ONNX observed
+    >
+另一侧可靠 YOLO/ONNX observed
+    >
+当前侧短时 predicted
+    >
+严格 handoff 内确认的 fast_motion 辅助候选
+    >
+temporarily_lost
 ```
 
-并增加：
+物理门控负责判断检测能否继承旧 ID；它不能让已经被本地 tracker 接受的模型
+观测输给旧预测。辅助运动候选不能冒充模型观测。
 
-- 连续可靠观测达到门槛后才启用加速度；
-- 图像空间加速度裁剪和漏检衰减；
-- NIS 创新门控；
-- 观测加速度上限；
-- impact recovery 后重置旧加速度；
-- 预测时长随速度连续缩短。
+当前离线双摄允许另一侧确认的主模型观测在旧侧只有预测或已经丢失时直接抢占，
+无需 handoff 已预警。这是 revision 9 延续的召回优先行为；同侧确认的主模型
+观测也会立即替代旧 prediction。真实机器人上线前仍需
+将跨摄切换收敛为同时满足观测优先与时空约束的生产状态机。
 
-这里的加速度单位是 `px/s^2`，属于图像空间软约束，不代表真实重力。
+## 历史桌面版本
+
+以下三套方案已停止维护，不再作为正式入口或默认配置：
+
+| 历史版本 | 历史配置 | 说明 |
+| --- | --- | --- |
+| mainline r1 | `legacy/ball_tracking_handoff/configs/maintained_history/tracking_mainline_r1.yaml` | 单帧 YOLO + 常速度 Kalman |
+| temporal r1 | `legacy/ball_tracking_handoff/configs/maintained_history/tracking_temporal_r1.yaml` | mainline + 相邻帧运动证据 |
+| physics r1 | `legacy/ball_tracking_handoff/configs/maintained_history/tracking_physics_r1.yaml` | temporal + 常加速度和物理门控 |
+
+对应历史 CMD 位于：
+
+```text
+legacy/ball_tracking_handoff/scripts/maintained_history/
+```
+
+退役的人体接触/双摄实验最终快照另存为
+`legacy/ball_tracking_handoff/configs/maintained_history/tracking_person_contact_r4.yaml`。
+它是实验历史，不属于上表三套旧正式版本，也不等价于 revision 9。
+
+活动 app、`src/tracking` 和默认脚本不得依赖这些历史文件。需要复查旧算法时，
+必须显式运行历史配置，并把结果写入新的历史回归目录。
 
 ## 板端配置
 
-`configs/tracking_edge.yaml` 使用 ONNX Runtime 和较小的分析尺寸，保留用于量化和板端部署研究。
-它不是第四套桌面算法版本。板端验收必须使用最终硬件、分辨率、FPS 和量化模型重新测试。
+`configs/tracking_edge.yaml` 是单路 ONNX Runtime 可移植和量化研究配置，不是
+第二套正式算法版本，也不是已验收的 RK3588S/RKNN 发布包。最终板端配置应在
+当前 revision 9 行为基础上完成转换、量化和性能验收。
 
-当前产品目标已确定为两个物理摄像头、每路 60 FPS。候选板卡按 RK3588S 级硬件
-规划，准确 SKU 尚未确认。现有 edge 配置只是单路 ONNX 可移植基线，不代表双路
-RKNN 已达到 60 FPS。实时运行时决策见
-[`0002-dual-camera-60fps-edge-runtime.md`](decisions/0002-dual-camera-60fps-edge-runtime.md)。
+## 尚未冻结但不阻止转正的参数
 
-## 人体接触门控实验分支
+真实左右摄像头尺度、比赛区、观众区、球网出口、handoff ROI、同步容差和板端
+推理策略记录在
+[`CAMERA_CALIBRATION_TODO.md`](CAMERA_CALIBRATION_TODO.md)。
 
-该分支已经有第一版可运行实现，但仍不是第四套正式版本。完整方案和限制见
-[`PERSON_CONTACT_PERSPECTIVE_TRACKING.md`](PERSON_CONTACT_PERSPECTIVE_TRACKING.md)。
-
-配置：`configs/tracking_person_contact.yaml`
-
-脚本：`scripts/run_person_contact_tracking.cmd`
-
-输出：`outputs/experiments/person_contact/current`
-
-第一版在 Physics Tracking 上增加：
-
-- 桌面和板端统一每 5 帧运行一次轻量人体模型；
-- 中间帧用 `PersonBoxTracker` 延续人体框；
-- 按脚点比赛区域、观众排除区、持续帧数和人数上限筛选比赛人员；
-- 只有球的观测线段接触比赛人员扩展框时，才允许大角度 `impact_recovery`；
-- JSONL 记录全部人体框、是否入选、接触区数量和接触门控拒绝次数。
-
-当前接触区仍是人体框尺度近似，不是球拍接触识别。完成固定样本验证前，不修改三个正式版本的输出。
-
-## A/B 对比规则
-
-对比三个版本时必须使用：
-
-- 相同模型；
-- 相同输入视频；
-- 相同检测置信度；
-- 相同输出轨迹长度；
-- 不覆盖旧结果的独立输出目录。
-
-重点比较：
-
-- 真实球检测/轨迹召回率；
-- 固定背景误检进入主轨迹的次数；
-- ID 切换次数；
-- 非击球时异常折线数量；
-- 击球后恢复原 ID 的成功率；
-- 预测帧比例和 1 至 3 帧预测误差；
-- 每帧耗时。
-
-## 双摄 Phase 2/3 实验
-
-双摄实验仍属于 `person_contact_dual_camera` 实验 profile，不是第四套正式桌面版本。
-
-入口与核心模块：
-
-```text
-apps/track_dual_halves.py
-src/tracking/dual_camera/
-src/tracking/fast_motion.py
-```
-
-当前增加：
-
-- 两路视频按相同帧号和时间戳同步处理；
-- 两侧保持独立本地候选，只输出一个全局球 ID；
-- 球靠近球网并朝球网高速运动时，对接收侧开启短时入场 ROI；
-- 接收侧全图 YOLO 漏检后追加一次 ROI YOLO；
-- 只有在 handoff ROI 或已有高速预测 ROI 内，连续高速小运动块才能辅助漏检；
-- `dual_camera_streams` 为左右流保留真实像素密度，避免裁切宽度误缩物理门控；
-- 人体数据继续参与接触门控并写入 JSONL，默认结果视频不显示人体框；
-- 最终全局 ID 逐帧执行速度连续性门控，本地 ID 切换不能产生超速长线；
-- 人体接触恢复限制在 120 ms 内，且长线仅穿过人体框不再算接触；
-- 每次运行自动生成代码、配置、输入和结果 manifest。
-
-该实验不比较两台摄像头的像素坐标，也不宣称完成双目标定或三维定位。
+这些参数属于安装和部署标定，不再用于把当前算法降级为“实验版本”。

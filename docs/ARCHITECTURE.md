@@ -14,7 +14,7 @@ BallDetector (PT or ONNX)
     |
     | 0-N BallDetection
     v
-TemporalMotionFilter (optional)
+TemporalMotionFilter (enabled in revision 9)
     |-- camera-compensated frame difference
     |-- local motion evidence
     v
@@ -23,6 +23,8 @@ MultiBallTracker
     |-- low-confidence recovery for existing tracks
     |-- camera-compensated motion confirmation
     |-- impact/reversal recovery with bounded gap growth
+    |-- close-range primary-observation bounce recovery
+    |-- consecutive primary-observation filter-lag correction
     |-- configurable CV or CA Kalman prediction
     |-- expiry and later re-identification with a new ID
     v
@@ -31,10 +33,10 @@ FrameResult.ball_tracks[]
     `-- observed/predicted overlay and per-ID trail
 ```
 
-## Person-contact experiment
+## Current official pipeline
 
-`tracking_person_contact.yaml` adds an optional side branch without changing the
-three maintained ball-only configurations:
+`configs/tracking.yaml` revision 9 integrates the ball pipeline with the
+low-frequency person-contact side branch:
 
 ```text
 frame
@@ -48,10 +50,14 @@ frame
                               contact-gated MultiBallTracker
 ```
 
-The person detector is low frequency on both desktop and board runs. Person boxes
+The person detector is low frequency on both desktop and future board runs. Person boxes
 are propagated every frame, so contact evidence remains available on the four
 frames between detector calls. Only boxes marked `eligible_player` are passed to
 the impact-recovery gate. Person detection never creates or predicts a ball.
+
+The former mainline, temporal and physics configurations are archived under
+`legacy/ball_tracking_handoff/configs/maintained_history/`. Active code does not
+import or depend on them.
 
 `apps/track_video.py` only depends on `src/tracking`. It does not import court calibration or projection.
 
@@ -72,15 +78,35 @@ the impact-recovery gate. Person detection never creates or predicts a ball.
 - `fast_motion.py`: ROI-gated consecutive high-speed motion proposals.
 - `run_manifest.py`: reproducible code/config/input/output metadata.
 - `dual_camera/coordinator.py`: global single-ball arbitration and handoff advice.
-- `dual_camera/runner.py`: synchronized two-stream processing.
+- `dual_camera/runner.py`: offline same-index paired-video processing.
 - `dual_camera/rendering.py`: side-by-side presentation and header layout.
 - `dual_camera/artifacts.py`: output names, partial promotion and integrity validation.
+- `runtime/frame_packet.py`: capture-timestamped left/right frame contracts.
+- `runtime/synchronization/queues.py`: bounded latest-frame queues and drop accounting.
+- `runtime/synchronization/pairer.py`: timestamp-nearest pairing, skew checks and stale-frame drops.
 
 The dependency direction is `apps/tools -> factory/core`. Core modules never import an
 application entry point. `apps/track_video.py` and `apps/track_dual_halves.py` are thin
 CLIs and do not own tracking policy.
 
-## Dual-camera experiment and robot target
+The current repository boundary is:
+
+```text
+apps/track_dual_halves.py
+    -> src/tracking/dual_camera/runner.py          offline paired-file regression
+       -> src/tracking/factory.py                 shared model/pipeline assembly
+       -> left/right BallTrackingPipeline         independent local state
+       -> CrossHalfBallCoordinator                one global ball
+
+future live entry
+    -> src/runtime/capture/                       not implemented
+    -> src/runtime/synchronization/               contracts implemented
+    -> src/runtime/inference/                     not implemented
+    -> src/tracking/                              reuse algorithm core
+    -> src/runtime/outputs/                       not implemented
+```
+
+## Dual-camera offline path and robot target
 
 The dual-camera path keeps independent pixel coordinate systems:
 
@@ -93,13 +119,30 @@ right camera -> local pipeline --+
 A net-bound trajectory activates a short receiving-side entry band. The receiver
 still runs full-frame YOLO every frame; after a miss it retries YOLO on that band.
 Fast-motion proposals are allowed only in an activated handoff ROI or an existing
-fast-track prediction ROI. No uncalibrated coordinate mapping between cameras is
-performed.
+fast-track prediction ROI. Revision 9 gives a confirmed YOLO/ONNX observation priority
+over a prediction or missing output on the other side. Handoff arming, entry-ROI
+membership and consecutive confirmation remain mandatory for auxiliary fast-motion
+candidates, so motion evidence cannot impersonate a primary detector observation.
+No uncalibrated coordinate mapping between cameras is performed. In strict mode, a
+source-side prediction that passes its configured net-facing image edge is retained
+only inside the local tracker; it is suppressed from global output and rendering.
+A confirmed side switch clears both rendering trails so points from different camera
+pixel spaces are never joined.
+
+Observation-first begins after the local pipeline has accepted a model detection.
+Raw YOLO/ONNX boxes are still subject to confidence filtering, duplicate removal,
+temporal-motion filtering, track confirmation and local association. The offline
+coordinator also allows a confirmed primary observation on the other side to preempt
+an old-side prediction without an armed handoff. Production must reconcile this
+recall-first behavior with a stricter cross-camera transition state machine.
 
 The current `dual_camera/runner.py` is an offline paired-file regression runner.
 It requires matching file metadata, reads the same frame index from both inputs,
 then invokes the shared detector for the left and right pipelines sequentially.
 This preserves offline time alignment but is not the final live-camera runtime.
+For the maintained pre-cropped offline inputs it derives a shared physical scale
+from the sum of the left and right image widths. Explicit per-camera overrides
+remain available for independently calibrated real cameras.
 
 The robot target is two physical 60 FPS cameras:
 
@@ -125,6 +168,11 @@ belong under `src/runtime/`. They must not be added to the offline runner. The
 accepted boundary and provisional latency gates are recorded in
 `docs/decisions/0002-dual-camera-60fps-edge-runtime.md`.
 
+`src/runtime` now provides hardware-independent `FramePacket`, `FramePair`,
+`BoundedLatestQueue` and `TimestampPairer` components. Camera drivers, RKNN
+contexts and robot I/O remain intentionally unimplemented until their concrete
+interfaces are available.
+
 ## Track lifecycle
 
 1. A detection above `high_conf` starts a tentative track.
@@ -135,10 +183,10 @@ accepted boundary and provisional latency gates are recorded in
 6. It remains internally recoverable until `max_missing_ms`, then expires.
 7. A later unmatched detection creates a new ID. No visual re-identification is currently claimed.
 
-The mainline configuration clusters duplicate ball boxes, requires motion in both raw and
+The current official configuration clusters duplicate ball boxes, requires motion in both raw and
 camera-compensated coordinates before exposing a new track, sleeps stationary tracks, recovers bounded
-impact/reversal jumps and rejects physically implausible displacement. The maintained desktop variants are
-documented in `docs/VERSIONS.md`.
+impact/reversal jumps and rejects physically implausible displacement. The current revision and archived
+desktop predecessors are documented in `docs/VERSIONS.md`.
 
 ## Supported boundary
 
@@ -149,7 +197,9 @@ The inherited court projection, player detection, event logic and old single-bal
 `legacy/ball_tracking_handoff/`. They are historical reference only: active code must not import from `legacy`
 and archived code is excluded from compile, lint, tests and release packages.
 
-The active person-contact experiment is a new implementation under `src/tracking`;
+The active person-contact implementation lives under `src/tracking`;
 it does not import the historical player detector from `legacy`.
 
 `tools/check_project_refs.py` enforces the active/legacy boundary and validates local Markdown links.
+The current implementation state, known gaps and handoff checklist are maintained in
+`docs/HANDOFF.md`.

@@ -1,8 +1,8 @@
 # 人体接触门控与透视补偿追踪方案
 
-## 1. 分支目标
+## 1. 功能目标
 
-本分支研究一个更可靠的击球恢复条件：
+本功能研究一个更可靠的击球恢复条件：
 
 ```text
 只有球接近球员的有效接触区域，并同时出现可信的运动突变时，
@@ -11,14 +11,17 @@
 
 它用于减少当前 `impact_recovery` 把灯光、标牌、鞋子或其他错误检测接回原 ID 的情况。
 
-该分支不是现有第四个正式版本。第一版实验代码和独立入口已经建立，完成固定数据验证后再决定是否提升为维护版本。
+该功能最初作为独立实验实现，现已合入唯一正式配置
+`configs/tracking.yaml` revision 9。人体支路只为 impact recovery 提供接触门控，
+不能创建球，也不能覆盖可靠球模型观测。
 
-### 第一版实现状态
+### 当前实现状态
 
 ```text
-配置：configs/tracking_person_contact.yaml
-脚本：scripts/run_person_contact_tracking.cmd
-输出：outputs/experiments/person_contact/current
+配置：configs/tracking.yaml
+正式入口：apps/track_dual_halves.py
+辅助单路诊断：apps/track_video.py
+输出：outputs/experiments/current
 人体模型：artifacts/models/yolo11n.pt（COCO person 类，本地权重不提交 Git）
 ```
 
@@ -28,7 +31,8 @@
 - 检测间隔内每帧延续人体框和稳定人体 ID；
 - 使用脚点比赛区域、观众排除区、持续帧数和最大人数做比赛人员初筛；
 - 只有球的观测线段进入 `eligible_player` 扩展框，才允许大角度恢复；
-- MP4 区分比赛人员框和普通人体框，JSONL 保留筛选分数及门控诊断。
+- JSONL 保留全部人体框、筛选分数及门控诊断；当前正式 MP4 默认
+  `draw_players: false`，需要调试时才显式显示人体框。
 
 尚未实现：
 
@@ -37,7 +41,11 @@
 - 标定后的场地多边形和真实三维深度；
 - 落地反弹与人体击球的独立事件分类。
 
-因此第一版仍需人工配置比赛区域或 `spectator_exclusion_regions`。它只提供较保守的二维接触证据，
+正式 YAML 的通用 `max_players` 为 4；离线双摄 CLI 默认通过
+`--max-players-per-half 2` 将每个半场限制为 2 名 eligible player。真实双摄
+仍需按单打/双打和每路视野配置，不能把这个 CLI 覆盖值误认为相机标定结果。
+
+因此当前二维实现仍需人工配置比赛区域或 `spectator_exclusion_regions`。它只提供较保守的二维接触证据，
 不能把球与人体框重叠解释为真实击球。
 
 ---
@@ -515,10 +523,13 @@ enter_threshold > keep_threshold
 
 人体框变化比高速球慢，不需要每帧做完整人体推理。
 
+最终目标不是 25 FPS，而是两路各 60 FPS：球模型总负载 120 张图/秒，人体模型
+按每 5 帧一次总负载 24 张图/秒。25 FPS 这里只是说明检测间隔，不是部署预算。
+
 ### 8.2 运行时策略
 
-- 两个模型使用同一种部署后端，优先 ONNX 或板卡原生 NPU 格式；
-- 顺序推理，避免同时占用峰值显存；
+- 最终 RK3588S 方案由一个推理调度器统一拥有 NPU；
+- batch=2、受控串行或多上下文必须实测，不能提前写死；
 - 共享解码和颜色转换结果；
 - 人体模型超时可以跳过，球追踪必须继续；
 - 人体结果带时间戳，超过有效期后不能继续触发接触；
@@ -528,7 +539,7 @@ enter_threshold > keep_threshold
 
 双模型能否实时运行取决于：
 
-- 板卡型号和加速器；
+- RK3588S 完整板卡、NPU/RKNN 版本和功耗模式；
 - 可用 RAM/显存；
 - 视频分辨率和目标 FPS；
 - 模型输入尺寸；
@@ -536,13 +547,14 @@ enter_threshold > keep_threshold
 - 视频解码开销；
 - 板卡对多模型图的调度能力。
 
-在板卡型号确定前，只能完成桌面功能验证，不能承诺最终实时 FPS。
+SoC 已确认是 RK3588S，但完整载板、相机、RKNN 环境和功耗模式尚未冻结，
+因此仍不能承诺最终实时 FPS。
 
 ---
 
 ## 9. 当前模块边界
 
-第一版采用：
+当前采用：
 
 ```text
 src/tracking/person_detector.py
@@ -555,7 +567,8 @@ src/tracking/person_tracking.py
 - `person_tracking.py`：低频检测之间维护人体 ID 和框，并完成比赛人员初筛；
 - `multi_ball_tracker.py`：消费 contact evidence，不负责运行人体模型；
 - `ball_pipeline.py`：按频率调度两个检测器并统一时间戳；
-- `types.py`：增加 person、wrist、contact diagnostics。
+- `types.py`：定义 person 和球追踪的稳定序列化结构；当前没有 wrist 数据契约；
+- `ball_pipeline.py` 的 diagnostics：记录人体检测、eligible player 和接触门控相关诊断。
 
 不要把人体推理直接写进 `MultiBallTracker`，否则追踪逻辑会与具体模型耦合。
 
@@ -563,9 +576,9 @@ src/tracking/person_tracking.py
 
 后续加入手腕/球拍和事件状态机时，再拆出独立 `contact_gate.py`。
 
-## 10. 第一版配置
+## 10. 当前配置
 
-完整配置见 `configs/tracking_person_contact.yaml`，关键部分如下：
+完整配置见 `configs/tracking.yaml`，关键部分如下：
 
 ```yaml
 runtime:
@@ -598,7 +611,7 @@ tracker:
 
 ## 11. 数据和标注要求
 
-为了验证该分支，需要从现有视频中建立接触事件集：
+为了继续验证该功能，需要从现有视频中建立接触事件集：
 
 - 每个人体轨迹的球员、观众、裁判或其他身份；
 - 球场区域、扩展比赛区和观众排除区；
@@ -678,6 +691,10 @@ contact_frame ± 1 frame
 
 ## 14. 推荐实施顺序
 
+以下 Phase 0～3 是该功能最初的实施路线。低频人体检测、PlayerSelector 和
+接触门控已经合入 revision 9，但尚未完成固定接触事件集上的完整影子对照；
+因此“代码已合入”不等于“人体接触准确率已验收”。
+
 ### Phase 0：标注和离线验证
 
 - 从现有视频标注击球、非击球近身经过和落地反弹片段；
@@ -705,7 +722,7 @@ contact_frame ± 1 frame
 - 只有接触候选窗口允许大角度恢复；
 - 保留 ground bounce 独立分支；
 - 对恢复后的 2～3 帧重新确认；
-- 与现有 physics 版本做固定 A/B 测试。
+- 与当前 revision 9 的接触门控关闭/开启结果做固定 A/B 测试。
 
 ### Phase 4：姿态或球拍增强
 
@@ -725,7 +742,8 @@ contact_frame ± 1 frame
 
 ## 15. 当前结论
 
-这个分支值得做，但应把人体信息理解为“接触概率证据”，不能理解为真实三维接触证明。
+该功能已经进入正式 pipeline，但仍应把人体信息理解为“接触概率证据”，不能
+理解为真实三维接触证明。
 
 近期最合理方案是：
 
@@ -745,4 +763,5 @@ contact_frame ± 1 frame
 独立 ground bounce 分支
 ```
 
-先以影子模式验证收益，再决定是否改变正式 physics 输出。真实解决前后深度错位，需要弱标定尺度图或双目三维定位。
+后续扩大接触恢复范围、加入姿态或改变正式输出之前，必须先以影子模式验证收益。
+真实解决前后深度错位，需要弱标定尺度图或双目三维定位。

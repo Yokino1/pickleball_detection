@@ -37,6 +37,8 @@ class _TrackState:
     stationary_time_s: float = 0.0
     age_time_s: float = 0.0
     last_observed_velocity: tuple[float, float] = (0.0, 0.0)
+    last_observation_source: str = "unknown"
+    bounce_recovery_until_s: float = -1.0
 
     @property
     def center(self) -> tuple[float, float]:
@@ -90,6 +92,7 @@ class MultiBallTracker:
         unconfirmed_max_frames: int = 30,
         unconfirmed_max_ms: Optional[float] = None,
         max_output_tracks: int = 0,
+        observation_first_output: bool = False,
         impact_recovery_gate_px: float = 260.0,
         impact_recovery_min_speed_px: float = 15.0,
         impact_recovery_min_speed_px_per_second: Optional[float] = None,
@@ -97,6 +100,17 @@ class MultiBallTracker:
         impact_recovery_max_missing_ms: Optional[float] = None,
         require_contact_for_impact_recovery: bool = False,
         contact_margin_ratio: float = 0.20,
+        bounce_recovery_enabled: bool = False,
+        bounce_recovery_sources: Optional[list[str]] = None,
+        bounce_recovery_min_downward_speed_px_per_second: float = 0.0,
+        bounce_recovery_min_upward_speed_px_per_second: float = 0.0,
+        bounce_recovery_min_horizontal_speed_px_per_second: float = 0.0,
+        bounce_recovery_max_displacement_px: float = 35.0,
+        bounce_recovery_max_missing_ms: float = 80.0,
+        bounce_recovery_require_no_contact: bool = True,
+        primary_continuity_recovery_enabled: bool = False,
+        primary_observation_sources: Optional[list[str]] = None,
+        primary_continuity_gate_px: float = 55.0,
         max_flight_direction_change_deg: float = 0.0,
         direction_gate_min_speed_px_per_second: float = 0.0,
         direction_gate_min_hits: int = 3,
@@ -186,6 +200,7 @@ class MultiBallTracker:
             else max(0.0, float(unconfirmed_max_ms) / 1000.0)
         )
         self.max_output_tracks = max(0, int(max_output_tracks))
+        self.observation_first_output = bool(observation_first_output)
         self.impact_recovery_gate_px = max(0.0, float(impact_recovery_gate_px))
         self.impact_recovery_min_speed_px = max(0.0, float(impact_recovery_min_speed_px))
         self.impact_recovery_min_speed_px_per_second = (
@@ -214,6 +229,41 @@ class MultiBallTracker:
             require_contact_for_impact_recovery
         )
         self.contact_margin_ratio = max(0.0, float(contact_margin_ratio))
+        self.bounce_recovery_enabled = bool(bounce_recovery_enabled)
+        self.bounce_recovery_sources = frozenset(
+            str(source).strip().lower()
+            for source in (bounce_recovery_sources or [])
+            if str(source).strip()
+        )
+        self.bounce_recovery_min_downward_speed_px_per_second = max(
+            0.0, float(bounce_recovery_min_downward_speed_px_per_second)
+        )
+        self.bounce_recovery_min_upward_speed_px_per_second = max(
+            0.0, float(bounce_recovery_min_upward_speed_px_per_second)
+        )
+        self.bounce_recovery_min_horizontal_speed_px_per_second = max(
+            0.0, float(bounce_recovery_min_horizontal_speed_px_per_second)
+        )
+        self.bounce_recovery_max_displacement_px = max(
+            0.0, float(bounce_recovery_max_displacement_px)
+        )
+        self.bounce_recovery_max_missing_s = max(
+            0.0, float(bounce_recovery_max_missing_ms) / 1000.0
+        )
+        self.bounce_recovery_require_no_contact = bool(
+            bounce_recovery_require_no_contact
+        )
+        self.primary_continuity_recovery_enabled = bool(
+            primary_continuity_recovery_enabled
+        )
+        self.primary_observation_sources = frozenset(
+            str(source).strip().lower()
+            for source in (primary_observation_sources or [])
+            if str(source).strip()
+        )
+        self.primary_continuity_gate_px = max(
+            0.0, float(primary_continuity_gate_px)
+        )
         self.max_flight_direction_change_deg = min(
             180.0, max(0.0, float(max_flight_direction_change_deg))
         )
@@ -277,6 +327,8 @@ class MultiBallTracker:
         self._physical_rejections = 0
         self._preferred_track_id: Optional[int] = None
         self._impact_recoveries = 0
+        self._bounce_recoveries = 0
+        self._primary_continuity_recoveries = 0
         self._direction_gate_rejections = 0
         self._nis_gate_rejections = 0
         self._acceleration_gate_rejections = 0
@@ -324,6 +376,8 @@ class MultiBallTracker:
         unmatched_tracks = set(range(len(self._tracks)))
         self._physical_rejections = 0
         self._impact_recoveries = 0
+        self._bounce_recoveries = 0
+        self._primary_continuity_recoveries = 0
         self._direction_gate_rejections = 0
         self._nis_gate_rejections = 0
         self._acceleration_gate_rejections = 0
@@ -406,6 +460,10 @@ class MultiBallTracker:
             "output_limited_tracks": len(eligible_tracks) - len(selected_tracks),
             "physical_gate_rejections": self._physical_rejections,
             "impact_recoveries": self._impact_recoveries,
+            "bounce_recoveries": self._bounce_recoveries,
+            "primary_continuity_recoveries": (
+                self._primary_continuity_recoveries
+            ),
             "direction_gate_rejections": self._direction_gate_rejections,
             "nis_gate_rejections": self._nis_gate_rejections,
             "acceleration_gate_rejections": self._acceleration_gate_rejections,
@@ -450,6 +508,8 @@ class MultiBallTracker:
         self._physical_rejections = 0
         self._preferred_track_id = None
         self._impact_recoveries = 0
+        self._bounce_recoveries = 0
+        self._primary_continuity_recoveries = 0
         self._direction_gate_rejections = 0
         self._nis_gate_rejections = 0
         self._acceleration_gate_rejections = 0
@@ -555,7 +615,21 @@ class MultiBallTracker:
                     - 0.12 * track.stationary_frames
                 )
 
-            selected = sorted(tracks, key=score, reverse=True)[: self.max_output_tracks]
+            if self.observation_first_output:
+                selected = sorted(
+                    tracks,
+                    key=lambda track: (
+                        track.observed_this_frame,
+                        score(track),
+                    ),
+                    reverse=True,
+                )[: self.max_output_tracks]
+            else:
+                selected = sorted(
+                    tracks,
+                    key=score,
+                    reverse=True,
+                )[: self.max_output_tracks]
         if self.max_output_tracks == 1:
             self._preferred_track_id = selected[0].track_id
         return selected
@@ -565,8 +639,8 @@ class MultiBallTracker:
         candidate_track_indices: set[int],
         detections: list[BallDetection],
         frame_width: int,
-    ) -> tuple[list[tuple[int, int, bool]], list[int]]:
-        pairs: list[tuple[float, int, int, bool]] = []
+    ) -> tuple[list[tuple[int, int, Optional[str]]], list[int]]:
+        pairs: list[tuple[float, int, int, Optional[str]]] = []
         scale = self._frame_scale(frame_width)
         for track_index in candidate_track_indices:
             track = self._tracks[track_index]
@@ -673,14 +747,50 @@ class MultiBallTracker:
                         <= self.impact_recovery_max_missing_s
                     )
                 )
+                has_contact = self._has_contact_evidence(track, detection)
                 contact_allowed = (
                     not self.require_contact_for_impact_recovery
-                    or self._has_contact_evidence(track, detection)
+                    or has_contact
                 )
-                if impact_candidate and not contact_allowed:
-                    self._contact_gate_rejections += 1
                 impact_recovery = impact_candidate and contact_allowed
-                if not impact_recovery and (
+                bounce_recovery = self._is_bounce_recovery(
+                    track,
+                    detection,
+                    observed_velocity,
+                    scale,
+                    has_contact=has_contact,
+                )
+                primary_continuity_recovery = (
+                    (
+                        direction_violation
+                        or acceleration_violation
+                        or nis_violation
+                    )
+                    and self._is_primary_continuity_recovery(
+                        track,
+                        detection,
+                        observed_velocity,
+                        observed_step,
+                        scale,
+                    )
+                )
+                if (
+                    impact_candidate
+                    and not contact_allowed
+                    and not bounce_recovery
+                    and not primary_continuity_recovery
+                ):
+                    self._contact_gate_rejections += 1
+                recovery_kind = (
+                    "bounce"
+                    if bounce_recovery
+                    else "primary_continuity"
+                    if primary_continuity_recovery
+                    else "impact"
+                    if impact_recovery
+                    else None
+                )
+                if recovery_kind is None and (
                     direction_violation
                     or acceleration_violation
                     or nis_violation
@@ -692,37 +802,144 @@ class MultiBallTracker:
                     self._nis_gate_rejections += int(nis_violation)
                     self._physical_rejections += 1
                     continue
-                if distance > gate and not impact_recovery:
+                if distance > gate and recovery_kind is None:
                     continue
                 dw = max(1.0, detection.bbox[2] - detection.bbox[0])
                 dh = max(1.0, detection.bbox[3] - detection.bbox[1])
                 size_penalty = abs(np.log(dw / max(track.bbox_width, 1.0))) + abs(
                     np.log(dh / max(track.bbox_height, 1.0))
                 )
-                if impact_recovery:
+                if bounce_recovery or primary_continuity_recovery:
+                    # A strict rebound signature on an established track should
+                    # stay ahead of a one-frame tentative clone. The same
+                    # priority applies to consecutive primary observations that
+                    # only disagree with a lagging filter state.
+                    cost = -0.25 + 0.25 * observed_step / max(impact_gate, 1.0)
+                elif impact_recovery:
                     cost = 1.0 + observed_step / max(impact_gate, 1.0)
                 else:
                     cost = distance / max(gate, 1.0)
                 cost += 0.08 * size_penalty - 0.10 * detection.confidence
                 if self.use_nis_gate and self.nis_gate_threshold > 0.0:
                     cost += 0.03 * min(nis / self.nis_gate_threshold, 3.0)
-                pairs.append((cost, track_index, detection_index, impact_recovery))
+                pairs.append((cost, track_index, detection_index, recovery_kind))
 
-        matches: list[tuple[int, int, bool]] = []
+        matches: list[tuple[int, int, Optional[str]]] = []
         used_tracks: set[int] = set()
         used_detections: set[int] = set()
-        for _, track_index, detection_index, impact_recovery in sorted(pairs):
+        for _, track_index, detection_index, recovery_kind in sorted(pairs):
             if track_index in used_tracks or detection_index in used_detections:
                 continue
             used_tracks.add(track_index)
             used_detections.add(detection_index)
-            matches.append((track_index, detection_index, impact_recovery))
-            if impact_recovery:
+            matches.append((track_index, detection_index, recovery_kind))
+            if recovery_kind == "impact":
                 self._impact_recoveries += 1
+            elif recovery_kind == "bounce":
+                self._bounce_recoveries += 1
+            elif recovery_kind == "primary_continuity":
+                self._primary_continuity_recoveries += 1
         unmatched_detections = [
             index for index in range(len(detections)) if index not in used_detections
         ]
         return matches, unmatched_detections
+
+    def _is_primary_continuity_recovery(
+        self,
+        track: _TrackState,
+        detection: BallDetection,
+        observed_velocity: tuple[float, float],
+        observed_step: float,
+        scale: float,
+    ) -> bool:
+        """Let consecutive primary observations correct a lagging filter."""
+        if (
+            not self.primary_continuity_recovery_enabled
+            or not track.motion_confirmed
+            or track.missing_time_s > 1e-9
+            or detection.confidence < self.high_conf
+        ):
+            return False
+        detection_source = str(detection.source).strip().lower()
+        previous_source = str(track.last_observation_source).strip().lower()
+        if (
+            not self.primary_observation_sources
+            or detection_source not in self.primary_observation_sources
+            or previous_source not in self.primary_observation_sources
+        ):
+            return False
+        if observed_step > self.primary_continuity_gate_px * scale:
+            return False
+        previous_speed = float(np.hypot(*track.last_observed_velocity))
+        observed_speed = float(np.hypot(*observed_velocity))
+        direction_floor = self.direction_gate_min_speed_px_per_second * scale
+        if previous_speed < direction_floor or observed_speed < direction_floor:
+            return True
+        raw_direction_change = self._direction_change_deg(
+            track.last_observed_velocity,
+            observed_velocity,
+        )
+        return raw_direction_change <= self.max_flight_direction_change_deg
+
+    def _is_bounce_recovery(
+        self,
+        track: _TrackState,
+        detection: BallDetection,
+        observed_velocity: tuple[float, float],
+        scale: float,
+        *,
+        has_contact: bool,
+    ) -> bool:
+        """Recognize a short, model-observed image-plane rebound."""
+        if not self.bounce_recovery_enabled or not track.motion_confirmed:
+            return False
+        if detection.confidence < self.high_conf:
+            return False
+        if (
+            self.bounce_recovery_sources
+            and str(detection.source).strip().lower()
+            not in self.bounce_recovery_sources
+        ):
+            return False
+        if self.bounce_recovery_require_no_contact and has_contact:
+            return False
+        if track.missing_time_s > self.bounce_recovery_max_missing_s:
+            return False
+        displacement = float(
+            np.hypot(
+                float(detection.center[0]) - track.last_observed_center[0],
+                float(detection.center[1]) - track.last_observed_center[1],
+            )
+        )
+        if displacement > self.bounce_recovery_max_displacement_px * scale:
+            return False
+        previous_vx, previous_vy = track.last_observed_velocity
+        observed_vx, observed_vy = observed_velocity
+        rebound_start = (
+            previous_vy
+            >= self.bounce_recovery_min_downward_speed_px_per_second * scale
+            and observed_vy
+            <= -self.bounce_recovery_min_upward_speed_px_per_second * scale
+        )
+        rebound_stabilizing = (
+            self._tracker_time_s <= track.bounce_recovery_until_s
+            and previous_vy
+            <= -self.bounce_recovery_min_upward_speed_px_per_second * scale
+            and observed_vy
+            <= -self.bounce_recovery_min_upward_speed_px_per_second * scale
+        )
+        if not rebound_start and not rebound_stabilizing:
+            return False
+        horizontal_floor = (
+            self.bounce_recovery_min_horizontal_speed_px_per_second * scale
+        )
+        if (
+            abs(previous_vx) >= horizontal_floor
+            and abs(observed_vx) >= horizontal_floor
+            and previous_vx * observed_vx < 0.0
+        ):
+            return False
+        return float(detection.center[1]) <= track.last_observed_center[1]
 
     def _has_contact_evidence(
         self,
@@ -771,12 +988,12 @@ class MultiBallTracker:
 
     def _apply_matches(
         self,
-        matches: list[tuple[int, int, bool]],
+        matches: list[tuple[int, int, Optional[str]]],
         detections: list[BallDetection],
         frame_width: int,
     ) -> None:
         scale = self._frame_scale(frame_width)
-        for track_index, detection_index, impact_recovery in matches:
+        for track_index, detection_index, recovery_kind in matches:
             track = self._tracks[track_index]
             detection = detections[detection_index]
             elapsed_s = max(
@@ -846,9 +1063,16 @@ class MultiBallTracker:
                 float(detection.center[1]),
             )
             track.kalman.update(detection.center)
-            if impact_recovery:
+            if recovery_kind is not None:
                 track.kalman.set_velocity(*measured_velocity)
                 track.kalman.reset_acceleration()
+                if (
+                    recovery_kind == "bounce"
+                    and self._tracker_time_s > track.bounce_recovery_until_s
+                ):
+                    track.bounce_recovery_until_s = (
+                        self._tracker_time_s + self.bounce_recovery_max_missing_s
+                    )
             elif track.hits + 1 < self.constant_acceleration_min_observations:
                 track.kalman.reset_acceleration()
             elif self.max_acceleration_px_per_second2 > 0.0:
@@ -861,6 +1085,7 @@ class MultiBallTracker:
             track.bbox_width = 0.7 * measured_width + 0.3 * track.bbox_width
             track.bbox_height = 0.7 * measured_height + 0.3 * track.bbox_height
             track.confidence = detection.confidence
+            track.last_observation_source = detection.source
             track.hits += 1
             track.missing_frames = 0
             track.missing_time_s = 0.0
@@ -894,6 +1119,7 @@ class MultiBallTracker:
                 last_observed_time_s=self._tracker_time_s,
                 stationary_anchor_time_s=self._tracker_time_s,
                 raw_stationary_anchor_time_s=self._tracker_time_s,
+                last_observation_source=detection.source,
             )
         )
         self._next_track_id += 1
@@ -920,6 +1146,11 @@ class MultiBallTracker:
             missing_frames=track.missing_frames,
             missing_time_ms=track.missing_time_s * 1000.0,
             source="detector" if track.observed_this_frame else "prediction",
+            observation_source=(
+                track.last_observation_source
+                if track.observed_this_frame
+                else None
+            ),
             age=track.age,
             hits=track.hits,
             confirmed=track.hits >= self.min_hits,

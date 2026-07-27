@@ -19,7 +19,7 @@ class DualRunArtifacts:
     @classmethod
     def for_run(cls, output_dir: Path, run_id: str) -> "DualRunArtifacts":
         return cls(
-            video=output_dir / f"{run_id}_dual_person_contact.mp4",
+            video=output_dir / f"{run_id}_dual_tracking.mp4",
             left_jsonl=output_dir / f"{run_id}_left_tracking.jsonl",
             right_jsonl=output_dir / f"{run_id}_right_tracking.jsonl",
             global_jsonl=output_dir / f"{run_id}_global_tracking.jsonl",

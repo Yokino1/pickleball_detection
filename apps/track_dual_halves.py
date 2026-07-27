@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--config",
-        default="configs/tracking_person_contact.yaml",
+        default="configs/tracking.yaml",
     )
     parser.add_argument(
         "--pair",

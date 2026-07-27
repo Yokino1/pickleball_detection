@@ -55,7 +55,15 @@ def run_pair(
     right_width = metadata["right"]["width"]
     left_height = metadata["left"]["height"]
     right_height = metadata["right"]["height"]
-    frame_scale_overrides = _stream_frame_scale_overrides(config)
+    frame_widths = {
+        "left": left_width,
+        "right": right_width,
+    }
+    frame_scale_mode = _stream_frame_scale_mode(config)
+    frame_scale_overrides = _stream_frame_scale_overrides(
+        config,
+        frame_widths,
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     artifacts = DualRunArtifacts.for_run(output_dir, run_id)
@@ -79,6 +87,7 @@ def run_pair(
         parameters={
             "max_frames": max_frames,
             "global_switch_min_missing_ms": global_switch_min_missing_ms,
+            "frame_scale_mode": frame_scale_mode,
             "frame_scale_overrides": frame_scale_overrides,
             "header_height": HEADER_HEIGHT,
             "run_note": run_note,
@@ -122,6 +131,10 @@ def run_pair(
     right_overlay = _build_overlay(output_config)
     person_config = config.get("runtime", {}).get("person_detection", {})
     tracker_config = config.get("tracker", {})
+    handoff_config = config.get("runtime", {}).get(
+        "dual_camera_handoff",
+        {},
+    )
     coordinator = CrossHalfBallCoordinator(
         switch_min_missing_ms=global_switch_min_missing_ms,
         max_continuity_speed_px_per_second=tracker_config.get(
@@ -133,6 +146,21 @@ def run_pair(
             1280.0,
         ),
         frame_scale_overrides=frame_scale_overrides,
+        strict_handoff=handoff_config.get(
+            "strict_state_machine",
+            False,
+        ),
+        receiver_confirmation_hits=handoff_config.get(
+            "receiver_confirmation_hits",
+            2,
+        ),
+        switch_lock_ms=handoff_config.get("switch_lock_ms", 100.0),
+        left_net_edge=handoff_config.get("left_net_edge", "right"),
+        right_net_edge=handoff_config.get("right_net_edge", "left"),
+        observation_first=handoff_config.get("observation_first", False),
+        primary_observation_sources=handoff_config.get(
+            "primary_observation_sources",
+        ),
     )
     handoff_advisor = _build_handoff_advisor(
         config,
@@ -142,6 +170,14 @@ def run_pair(
     processed = 0
     roi_retry_frames = 0
     fast_motion_proposal_frames = 0
+    trail_reset_frames = 0
+    previous_rendered_tracks: dict[
+        str,
+        tuple[int | None, tuple[float, float], float] | None,
+    ] = {
+        "left": None,
+        "right": None,
+    }
     started = time.perf_counter()
     completed = False
     try:
@@ -195,6 +231,14 @@ def run_pair(
                     right_result,
                 )
 
+                handoff_status = _handoff_status(
+                    handoff_advisor,
+                    timestamp_s,
+                    {
+                        "left": left_search_roi,
+                        "right": right_search_roi,
+                    },
+                )
                 selection = coordinator.update(
                     left_result.ball_tracks,
                     right_result.ball_tracks,
@@ -203,7 +247,27 @@ def run_pair(
                         "left": left_width,
                         "right": right_width,
                     },
+                    handoff=handoff_status,
                 )
+                trail_reset_reason = _trail_reset_reason(
+                    selection,
+                    timestamp_s=timestamp_s,
+                    previous_rendered_tracks=previous_rendered_tracks,
+                    max_speed_px_per_second=tracker_config.get(
+                        "max_speed_px_per_second",
+                        0.0,
+                    ),
+                    frame_scale_overrides=frame_scale_overrides,
+                )
+                if trail_reset_reason is not None:
+                    trail_reset_frames += 1
+                    if selection.switched_side:
+                        left_overlay.reset()
+                        right_overlay.reset()
+                    elif selection.active_side == "left":
+                        left_overlay.reset()
+                    elif selection.active_side == "right":
+                        right_overlay.reset()
                 if handoff_advisor is not None:
                     handoff_advisor.update(
                         selection,
@@ -230,6 +294,7 @@ def run_pair(
                             handoff_advisor,
                             left_result,
                             right_result,
+                            trail_reset_reason=trail_reset_reason,
                         ),
                         ensure_ascii=False,
                     )
@@ -261,6 +326,11 @@ def run_pair(
                         if selection.active_side == "right"
                         else None,
                     ),
+                )
+                _remember_rendered_track(
+                    selection,
+                    timestamp_s,
+                    previous_rendered_tracks,
                 )
                 combined = cv2.hconcat([left_rendered, right_rendered])
                 combined = cv2.vconcat(
@@ -334,6 +404,7 @@ def run_pair(
                 ),
                 "roi_retry_frames": roi_retry_frames,
                 "fast_motion_proposal_frames": fast_motion_proposal_frames,
+                "trail_reset_frames": trail_reset_frames,
             },
         )
         write_manifest(partial.manifest, manifest)
@@ -397,16 +468,62 @@ def _build_handoff_advisor(
 ) -> CrossCameraHandoffAdvisor | None:
     values = dict(config.get("runtime", {}).get("dual_camera_handoff", {}))
     enabled = bool(values.pop("enabled", True))
+    values.pop("strict_state_machine", None)
+    values.pop("receiver_confirmation_hits", None)
+    values.pop("switch_lock_ms", None)
+    values.pop("observation_first", None)
+    values.pop("primary_observation_sources", None)
     values["frame_scale_overrides"] = frame_scale_overrides
     return CrossCameraHandoffAdvisor(**values) if enabled else None
 
 
-def _stream_frame_scale_overrides(config: dict) -> dict[str, float]:
+def _stream_frame_scale_mode(config: dict) -> str:
     stream_config = config.get("runtime", {}).get(
         "dual_camera_streams",
         {},
     )
-    overrides = {}
+    mode = str(
+        stream_config.get("frame_scale_mode", "per_stream_width")
+    ).strip()
+    valid = {"per_stream_width", "paired_crop_total_width"}
+    if mode not in valid:
+        raise ValueError(
+            "runtime.dual_camera_streams.frame_scale_mode must be one of "
+            f"{sorted(valid)}, found {mode!r}"
+        )
+    return mode
+
+
+def _stream_frame_scale_overrides(
+    config: dict,
+    frame_widths: dict[str, int],
+) -> dict[str, float]:
+    stream_config = config.get("runtime", {}).get(
+        "dual_camera_streams",
+        {},
+    )
+    mode = _stream_frame_scale_mode(config)
+    overrides: dict[str, float] = {}
+    if mode == "paired_crop_total_width":
+        reference_width = float(
+            config.get("tracker", {}).get(
+                "reference_frame_width",
+                1280.0,
+            )
+        )
+        if reference_width <= 0.0:
+            raise ValueError("tracker.reference_frame_width must be positive")
+        pair_width = sum(
+            max(0, int(frame_widths.get(side, 0)))
+            for side in ("left", "right")
+        )
+        if pair_width <= 0:
+            raise ValueError(
+                "paired_crop_total_width requires positive left/right widths"
+            )
+        inferred = max(0.25, pair_width / reference_width)
+        overrides = {"left": inferred, "right": inferred}
+
     for side in ("left", "right"):
         value = stream_config.get(side, {}).get("frame_scale_override")
         if value is None:
@@ -419,6 +536,66 @@ def _stream_frame_scale_overrides(config: dict) -> dict[str, float]:
             )
         overrides[side] = scale
     return overrides
+
+
+def _trail_reset_reason(
+    selection,
+    *,
+    timestamp_s: float,
+    previous_rendered_tracks: dict[
+        str,
+        tuple[int | None, tuple[float, float], float] | None,
+    ],
+    max_speed_px_per_second: float,
+    frame_scale_overrides: dict[str, float],
+) -> str | None:
+    track = selection.track
+    side = selection.active_side
+    if track is None or side not in ("left", "right") or track.center is None:
+        return None
+    if selection.switched_side:
+        return "camera_side_switch"
+    previous = previous_rendered_tracks.get(side)
+    if previous is None:
+        return None
+    previous_track_id, previous_center, previous_timestamp_s = previous
+    if previous_track_id != selection.local_track_id:
+        return "local_track_change"
+    elapsed_s = float(timestamp_s) - previous_timestamp_s
+    if elapsed_s <= 0.0 or max_speed_px_per_second <= 0.0:
+        return None
+    distance = float(
+        (
+            (float(track.center[0]) - previous_center[0]) ** 2
+            + (float(track.center[1]) - previous_center[1]) ** 2
+        )
+        ** 0.5
+    )
+    scale = float(frame_scale_overrides.get(side, 1.0))
+    if distance / elapsed_s > max_speed_px_per_second * scale:
+        return "physical_discontinuity"
+    return None
+
+
+def _remember_rendered_track(
+    selection,
+    timestamp_s: float,
+    previous_rendered_tracks: dict[
+        str,
+        tuple[int | None, tuple[float, float], float] | None,
+    ],
+) -> None:
+    for side in ("left", "right"):
+        previous_rendered_tracks[side] = None
+    track = selection.track
+    side = selection.active_side
+    if track is None or side not in ("left", "right") or track.center is None:
+        return
+    previous_rendered_tracks[side] = (
+        selection.local_track_id,
+        (float(track.center[0]), float(track.center[1])),
+        float(timestamp_s),
+    )
 
 
 def _search_roi(
@@ -436,6 +613,23 @@ def _search_roi(
         frame_width=width,
         frame_height=height,
     )
+
+
+def _handoff_status(
+    advisor: CrossCameraHandoffAdvisor | None,
+    timestamp_s: float,
+    search_rois: dict[str, list[float] | None],
+) -> dict | None:
+    if advisor is None:
+        return None
+    status = advisor.diagnostics(timestamp_s)
+    target_side = status.get("target_side")
+    status["target_roi"] = (
+        search_rois.get(target_side)
+        if target_side in ("left", "right")
+        else None
+    )
+    return status
 
 
 def _raise_for_detector_errors(
@@ -469,6 +663,8 @@ def _global_frame_record(
     handoff_advisor,
     left_result,
     right_result,
+    *,
+    trail_reset_reason: str | None = None,
 ) -> dict:
     def side_record(result) -> dict:
         return {
@@ -491,6 +687,10 @@ def _global_frame_record(
             if handoff_advisor is not None
             else {"active": False, "enabled": False}
         ),
+        "rendering": {
+            "trail_reset": trail_reset_reason is not None,
+            "trail_reset_reason": trail_reset_reason,
+        },
         "left": side_record(left_result),
         "right": side_record(right_result),
     }

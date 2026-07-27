@@ -15,6 +15,8 @@ def track(
     confidence: float = 0.8,
     missing_time_ms: float = 0.0,
     center: tuple[float, float] = (100.0, 120.0),
+    source: str = "detector",
+    observation_source: str | None = None,
 ) -> BallTrack:
     return BallTrack(
         track_id=track_id,
@@ -28,10 +30,28 @@ def track(
         ],
         confidence=confidence,
         missing_time_ms=missing_time_ms,
+        source=source,
+        observation_source=observation_source,
         hits=5,
         confirmed=True,
         motion_confirmed=True,
     )
+
+
+def handoff(
+    source_side: str,
+    target_side: str,
+    *,
+    expires_at_s: float = 1.0,
+    target_roi: list[float] | None = None,
+) -> dict:
+    return {
+        "active": True,
+        "source_side": source_side,
+        "target_side": target_side,
+        "expires_at_s": expires_at_s,
+        "target_roi": target_roi or [0.0, 0.0, 300.0, 600.0],
+    }
 
 
 class CrossHalfBallCoordinatorTest(unittest.TestCase):
@@ -230,6 +250,402 @@ class CrossHalfBallCoordinatorTest(unittest.TestCase):
                 frame_width=1000,
                 frame_height=600,
             )
+        )
+
+    def test_strict_handoff_rejects_receiver_without_armed_window(self):
+        coordinator = CrossHalfBallCoordinator(
+            strict_handoff=True,
+            receiver_confirmation_hits=2,
+        )
+        coordinator.update(
+            [track(7)],
+            [],
+            timestamp_s=0.0,
+        )
+
+        result = coordinator.update(
+            [track(7, status="predicted", missing_time_ms=40.0)],
+            [track(3, center=(100.0, 300.0))],
+            timestamp_s=0.02,
+        )
+
+        self.assertEqual(result.active_side, "left")
+        self.assertFalse(result.switched_side)
+        self.assertEqual(result.local_track_id, 7)
+        self.assertEqual(coordinator.diagnostics()["handoff_rejections"], 1)
+
+    def test_primary_observation_preempts_prediction_without_handoff(self):
+        coordinator = CrossHalfBallCoordinator(
+            strict_handoff=True,
+            observation_first=True,
+        )
+        coordinator.update(
+            [track(7, observation_source="yolo")],
+            [],
+            timestamp_s=0.0,
+        )
+
+        result = coordinator.update(
+            [
+                track(
+                    7,
+                    status="predicted",
+                    missing_time_ms=20.0,
+                    source="prediction",
+                )
+            ],
+            [
+                track(
+                    3,
+                    center=(700.0, 300.0),
+                    observation_source="yolo",
+                )
+            ],
+            timestamp_s=0.02,
+        )
+
+        self.assertEqual(result.active_side, "right")
+        self.assertEqual(result.track.status, "observed")
+        self.assertEqual(result.track.source, "detector")
+        self.assertEqual(result.track.observation_source, "yolo")
+        self.assertTrue(result.switched_side)
+        self.assertEqual(
+            coordinator.diagnostics()["observation_preemptions"],
+            1,
+        )
+
+    def test_same_side_primary_observation_preempts_old_prediction(self):
+        coordinator = CrossHalfBallCoordinator(
+            strict_handoff=True,
+            observation_first=True,
+        )
+        coordinator.update(
+            [track(7, observation_source="yolo")],
+            [],
+            timestamp_s=0.0,
+        )
+
+        result = coordinator.update(
+            [
+                track(
+                    7,
+                    status="predicted",
+                    missing_time_ms=20.0,
+                    source="prediction",
+                ),
+                track(
+                    8,
+                    center=(112.0, 118.0),
+                    observation_source="yolo",
+                ),
+            ],
+            [],
+            timestamp_s=0.02,
+        )
+
+        self.assertEqual(result.active_side, "left")
+        self.assertEqual(result.local_track_id, 8)
+        self.assertEqual(result.track.status, "observed")
+        self.assertFalse(result.switched_side)
+        self.assertEqual(
+            coordinator.diagnostics()[
+                "same_side_observation_preemptions"
+            ],
+            1,
+        )
+
+    def test_primary_observation_preempts_missing_active_side(self):
+        coordinator = CrossHalfBallCoordinator(
+            strict_handoff=True,
+            observation_first=True,
+        )
+        coordinator.update(
+            [track(7, observation_source="yolo")],
+            [],
+            timestamp_s=0.0,
+        )
+
+        result = coordinator.update(
+            [],
+            [
+                track(
+                    3,
+                    center=(700.0, 300.0),
+                    observation_source="onnxruntime",
+                )
+            ],
+            timestamp_s=0.02,
+        )
+
+        self.assertEqual(result.active_side, "right")
+        self.assertEqual(result.track.status, "observed")
+        self.assertEqual(result.track.source, "detector")
+        self.assertEqual(result.track.observation_source, "onnxruntime")
+        self.assertTrue(result.switched_side)
+
+    def test_primary_observation_is_not_vetoed_by_duplicate_global_speed_gate(self):
+        coordinator = CrossHalfBallCoordinator(
+            strict_handoff=True,
+            observation_first=True,
+            max_continuity_speed_px_per_second=100.0,
+        )
+        coordinator.update(
+            [track(7, center=(100.0, 300.0), observation_source="yolo")],
+            [],
+            timestamp_s=0.0,
+        )
+
+        result = coordinator.update(
+            [track(7, center=(900.0, 300.0), observation_source="yolo")],
+            [],
+            timestamp_s=0.02,
+        )
+
+        self.assertEqual(result.active_side, "left")
+        self.assertEqual(result.track.status, "observed")
+        self.assertEqual(
+            coordinator.diagnostics()["continuity_gate_rejections"],
+            0,
+        )
+
+    def test_fast_motion_observation_cannot_bypass_handoff(self):
+        coordinator = CrossHalfBallCoordinator(
+            strict_handoff=True,
+            observation_first=True,
+        )
+        coordinator.update(
+            [track(7, observation_source="yolo")],
+            [],
+            timestamp_s=0.0,
+        )
+
+        result = coordinator.update(
+            [
+                track(
+                    7,
+                    status="predicted",
+                    missing_time_ms=40.0,
+                    source="prediction",
+                )
+            ],
+            [
+                track(
+                    3,
+                    center=(100.0, 300.0),
+                    observation_source="fast_motion",
+                )
+            ],
+            timestamp_s=0.02,
+        )
+
+        self.assertEqual(result.active_side, "left")
+        self.assertEqual(result.track.status, "predicted")
+        self.assertFalse(result.switched_side)
+        self.assertEqual(
+            coordinator.diagnostics()["observation_preemptions"],
+            0,
+        )
+
+    def test_strict_handoff_requires_consecutive_receiver_confirmation(self):
+        coordinator = CrossHalfBallCoordinator(
+            strict_handoff=True,
+            receiver_confirmation_hits=2,
+        )
+        widths = {"left": 1000, "right": 1000}
+        coordinator.update(
+            [track(7)],
+            [],
+            timestamp_s=0.0,
+            frame_widths=widths,
+        )
+
+        confirming = coordinator.update(
+            [track(7, status="predicted", missing_time_ms=40.0)],
+            [track(3, center=(100.0, 300.0))],
+            timestamp_s=0.02,
+            frame_widths=widths,
+            handoff=handoff("left", "right"),
+        )
+        switched = coordinator.update(
+            [],
+            [track(3, center=(112.0, 300.0))],
+            timestamp_s=0.04,
+            frame_widths=widths,
+            handoff=handoff("left", "right"),
+        )
+
+        self.assertEqual(confirming.state, "right_confirming")
+        self.assertEqual(confirming.active_side, "left")
+        self.assertFalse(confirming.switched_side)
+        self.assertEqual(switched.state, "right_active")
+        self.assertEqual(switched.active_side, "right")
+        self.assertTrue(switched.switched_side)
+        self.assertEqual(switched.local_track_id, 3)
+        self.assertEqual(coordinator.diagnostics()["handoff_count"], 1)
+
+    def test_strict_handoff_rejects_receiver_outside_entry_roi(self):
+        coordinator = CrossHalfBallCoordinator(strict_handoff=True)
+        coordinator.update([track(7)], [], timestamp_s=0.0)
+
+        result = coordinator.update(
+            [],
+            [track(3, center=(700.0, 300.0))],
+            timestamp_s=0.02,
+            handoff=handoff("left", "right"),
+        )
+
+        self.assertEqual(result.active_side, "left")
+        self.assertFalse(result.switched_side)
+        self.assertEqual(result.state, "left_to_right_armed")
+        self.assertEqual(coordinator.diagnostics()["handoff_rejections"], 1)
+
+    def test_strict_handoff_confirmation_resets_when_source_recovers(self):
+        coordinator = CrossHalfBallCoordinator(
+            strict_handoff=True,
+            receiver_confirmation_hits=2,
+        )
+        coordinator.update([track(7)], [], timestamp_s=0.0)
+        coordinator.update(
+            [],
+            [track(3, center=(100.0, 300.0))],
+            timestamp_s=0.02,
+            handoff=handoff("left", "right"),
+        )
+
+        recovered = coordinator.update(
+            [track(7, center=(920.0, 300.0))],
+            [track(3, center=(110.0, 300.0))],
+            timestamp_s=0.04,
+            handoff=handoff("left", "right"),
+        )
+
+        self.assertEqual(recovered.active_side, "left")
+        self.assertEqual(recovered.state, "left_to_right_armed")
+        self.assertEqual(coordinator.diagnostics()["confirmation_hits"], 0)
+
+    def test_strict_handoff_window_expires_without_switch(self):
+        coordinator = CrossHalfBallCoordinator(strict_handoff=True)
+        coordinator.update([track(7)], [], timestamp_s=0.0)
+        coordinator.update(
+            [track(7)],
+            [],
+            timestamp_s=0.02,
+            handoff=handoff(
+                "left",
+                "right",
+                expires_at_s=0.03,
+            ),
+        )
+
+        result = coordinator.update(
+            [],
+            [track(3, center=(100.0, 300.0))],
+            timestamp_s=0.05,
+        )
+
+        self.assertEqual(result.active_side, "left")
+        self.assertFalse(result.switched_side)
+        self.assertEqual(coordinator.diagnostics()["handoff_timeouts"], 1)
+
+    def test_strict_handoff_switch_lock_blocks_immediate_reverse_switch(self):
+        coordinator = CrossHalfBallCoordinator(
+            strict_handoff=True,
+            receiver_confirmation_hits=1,
+            switch_lock_ms=100.0,
+        )
+        coordinator.update([track(7)], [], timestamp_s=0.0)
+
+        switched = coordinator.update(
+            [track(7, status="predicted", missing_time_ms=40.0)],
+            [track(3, center=(100.0, 300.0))],
+            timestamp_s=0.02,
+            handoff=handoff("left", "right"),
+        )
+        reverse_attempt = coordinator.update(
+            [track(8, center=(900.0, 300.0))],
+            [track(3, center=(110.0, 300.0), status="predicted", missing_time_ms=20.0)],
+            timestamp_s=0.04,
+            handoff=handoff("right", "left"),
+        )
+
+        self.assertEqual(switched.active_side, "right")
+        self.assertTrue(switched.switched_side)
+        self.assertEqual(reverse_attempt.active_side, "right")
+        self.assertFalse(reverse_attempt.switched_side)
+        self.assertGreater(
+            coordinator.diagnostics()["switch_lock_until_s"],
+            0.04,
+        )
+
+    def test_strict_handoff_suppresses_prediction_past_net_exit(self):
+        widths = {"left": 1000, "right": 1000}
+        cases = (
+            ("left", [track(7, center=(980.0, 300.0))], [], (1010.0, 300.0)),
+            ("right", [], [track(7, center=(20.0, 300.0))], (-10.0, 300.0)),
+        )
+        for side, left_tracks, right_tracks, predicted_center in cases:
+            with self.subTest(side=side):
+                coordinator = CrossHalfBallCoordinator(strict_handoff=True)
+                coordinator.update(
+                    left_tracks,
+                    right_tracks,
+                    timestamp_s=0.0,
+                    frame_widths=widths,
+                )
+                predicted = track(
+                    7,
+                    status="predicted",
+                    missing_time_ms=20.0,
+                    center=predicted_center,
+                )
+
+                result = coordinator.update(
+                    [predicted] if side == "left" else [],
+                    [predicted] if side == "right" else [],
+                    timestamp_s=0.02,
+                    frame_widths=widths,
+                    handoff=handoff(
+                        side,
+                        "right" if side == "left" else "left",
+                    ),
+                )
+
+                self.assertEqual(result.active_side, side)
+                self.assertIsNone(result.track)
+                self.assertEqual(
+                    coordinator.diagnostics()[
+                        "prediction_boundary_rejections"
+                    ],
+                    1,
+                )
+
+    def test_legacy_mode_keeps_existing_boundary_prediction_behaviour(self):
+        coordinator = CrossHalfBallCoordinator(strict_handoff=False)
+        coordinator.update(
+            [track(7, center=(980.0, 300.0))],
+            [],
+            timestamp_s=0.0,
+            frame_widths={"left": 1000, "right": 1000},
+        )
+
+        result = coordinator.update(
+            [
+                track(
+                    7,
+                    status="predicted",
+                    missing_time_ms=20.0,
+                    center=(1010.0, 300.0),
+                )
+            ],
+            [],
+            timestamp_s=0.02,
+            frame_widths={"left": 1000, "right": 1000},
+        )
+
+        self.assertIsNotNone(result.track)
+        self.assertEqual(
+            coordinator.diagnostics()["prediction_boundary_rejections"],
+            0,
         )
 
 

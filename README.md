@@ -4,59 +4,39 @@
 维护一个主要输出 ID，在短时漏检时做保守预测，并输出带轨迹 MP4 和逐帧 JSONL。
 球场二维投影和三维坐标不属于当前主流程。
 
-## 保留版本
+## 当前正式版本
 
-项目只维护三套桌面检测追踪配置：
+项目只维护一套活动正式算法配置：
 
 | 版本 | 配置 | 运行脚本 | 用途 |
 | --- | --- | --- | --- |
-| 主线 | `configs/tracking.yaml` | `scripts/run_mainline_tracking.cmd` | 单帧 YOLO + CV Kalman + 相机补偿和关联约束 |
-| 连续帧 | `configs/tracking_temporal.yaml` | `scripts/run_temporal_tracking.cmd` | 主线 + 轻量相邻帧运动证据过滤 |
-| 物理约束 | `configs/tracking_physics.yaml` | `scripts/run_physics_tracking.cmd` | 连续帧 + CA Kalman + NIS/加速度约束 |
+| Pickleball Tracking revision 9 | `configs/tracking.yaml` | `apps/track_dual_halves.py` | 两个半场视频成对处理、裁切尺度自动推导、连续主模型观测纠偏、受限落地反弹恢复、CA Kalman、人体接触和全局单球协调 |
 
-三套版本共用 `apps/track_video.py` 和 `src/tracking`，不存在三份相互复制的追踪代码。
-`configs/tracking_edge.yaml` 仅作为后续板端 ONNX 部署配置保留，不属于桌面 A/B 三版本。
+原 mainline、temporal 和 physics 三套桌面方案已经停止维护，配置与 CMD
+保存在 `legacy/ball_tracking_handoff/`，只用于历史回归。`tracking_edge.yaml`
+仍是板端部署研究配置，不代表另一套活动算法版本。
 
-另有一条不替代上述三版的实验分支：
+详细版本关系见 [版本说明](docs/VERSIONS.md)。
 
-| 实验分支 | 配置 | 运行脚本 | 用途 |
-| --- | --- | --- | --- |
-| 人体接触门控 | `configs/tracking_person_contact.yaml` | `scripts/run_person_contact_tracking.cmd` | Physics + 每 5 帧人体检测 + 比赛人员筛选 + 击球恢复接触门控 |
+## 正式双半场运行
 
-详细差异见 [版本说明](docs/VERSIONS.md)。
-
-## 直接运行
-
-在 Conda CMD 中进入项目目录：
+以下代码直接粘贴到 Conda CMD 窗口。每次完整测试必须使用新的 run ID：
 
 ```bat
+call "D:\anacondaa\Scripts\activate.bat" "D:\anacondaa\envs\torch-cu128"
 cd /d D:\ball\ball_tracking_handoff\ball_tracking_handoff
+
+python apps\track_dual_halves.py ^
+  --config configs\tracking.yaml ^
+  --pair 20260727_full_clean_pickleball-r9_observation-continuity01 ^
+  "data\derived\court_halves\全_干净背景_left.mp4" ^
+  "data\derived\court_halves\全_干净背景_right.mp4" ^
+  --output-dir outputs\experiments\dual_camera
 ```
 
-然后选择一版：
-
-```bat
-scripts\run_mainline_tracking.cmd
-scripts\run_temporal_tracking.cmd
-scripts\run_physics_tracking.cmd
-scripts\run_person_contact_tracking.cmd
-```
-
-这些脚本默认处理 `data\sideview_raw` 中现有的全部视频，分别输出到：
-
-```text
-outputs\experiments\desktop_ab\mainline
-outputs\experiments\desktop_ab\temporal
-outputs\experiments\desktop_ab\physics
-outputs\experiments\person_contact\current
-```
-
-每个视频生成：
-
-```text
-<video>_tracked.mp4
-<video>_tracking.jsonl
-```
+当前正式流程同时读取左右两个半场视频，分别运行本地 pipeline，再由全局协调器
+只输出一个主球。`apps/track_video.py` 仅保留为单路问题定位工具，不代表当前
+正式产品运行方式。
 
 当前默认只输出一个评分最高的运动球轨迹，轨迹、检测圈、预测圈和标签统一使用荧光绿色。
 
@@ -64,11 +44,11 @@ outputs\experiments\person_contact\current
 
 ```text
 apps/                 单视频与同步双摄 CLI 入口
-configs/              正式、实验和板端 profile
+configs/              当前正式算法和板端研究 profile
 src/tracking/         检测、关联、预测和公共装配
-src/tracking/dual_camera/  双摄同步、协调、渲染和产物管理
-src/runtime/          未来机器人实时采集、同步和推理调度边界
-scripts/              三版本 CMD 与项目检查脚本
+src/tracking/dual_camera/  离线双视频处理、协调、渲染和产物管理
+src/runtime/          已实现时间戳帧/有界配对契约；采集、RKNN 调度和控制待接入
+scripts/              项目检查和维护脚本，不保存正式运行批处理
 tests/                核心算法回归测试
 docs/                 版本、规则、架构、训练和部署文档
 experiments/          可提交的实验元数据，不保存大文件
@@ -81,7 +61,7 @@ legacy/               原始交接代码参考，不被主流程导入
 
 ## 文档入口
 
-- [三个版本说明](docs/VERSIONS.md)
+- [当前与历史版本说明](docs/VERSIONS.md)
 - [追踪规则与参数](docs/TRACKING_RULES.md)
 - [物理约束方案](docs/Physics_EKF_Pickleball_Tracking.md)
 - [人体接触门控与透视补偿方案](docs/PERSON_CONTACT_PERSPECTIVE_TRACKING.md)
@@ -89,6 +69,8 @@ legacy/               原始交接代码参考，不被主流程导入
 - [下一步工作](docs/NEXT_STEPS.md)
 - [训练流程](docs/TRAINING.md)
 - [板端部署](docs/DEPLOYMENT.md)
+- [真实双摄待标定参数](docs/CAMERA_CALIBRATION_TODO.md)
+- [当前交接状态、已知风险与量化前置条件](docs/HANDOFF.md)
 - [开发维护](docs/DEVELOPMENT.md)
 - [长期维护与输出规范](docs/MAINTENANCE.md)
 - [双摄 60 FPS 板端架构决策](docs/decisions/0002-dual-camera-60fps-edge-runtime.md)
@@ -100,12 +82,16 @@ legacy/               原始交接代码参考，不被主流程导入
 [outputs/README.md](outputs/README.md)。
 
 最终机器人目标是两个独立半场摄像头、每路 60 FPS。当前双视频入口是离线
-回归工具，不是实时采集实现；候选板卡按 RK3588S 级硬件规划，准确 SKU 待确认。
+回归工具，不是实时采集实现；板卡 SoC 已确认是 RK3588S，具体载板、内存、
+相机接口、散热和功耗模式仍待记录与实测。
 
 ## 当前边界
 
 - 检测模型持续漏检时，追踪器只能补极短时间，不能凭空恢复球。
-- 当前 physics 版本使用二维像素空间加速度，不使用真实 `9.81 m/s^2` 重力。
+- 当前物理约束使用二维像素空间加速度，不使用真实 `9.81 m/s^2` 重力。
+- “模型观测优先”从本地 tracker 已接受的模型观测开始；原始检测仍可能被
+  时序过滤或关联门控拒绝，必须结合 JSONL 诊断分类。
+- 当前离线双摄允许另一侧主模型观测直接抢占旧侧预测；生产级跨摄状态机尚未完成。
 - 真实重力、空气阻力和三维轨迹需要相机标定及双目或其他深度来源。
 - 主流程不得导入 `legacy`。
 - 视频、数据集、权重、导出模型和输出结果不得随意提交 Git。

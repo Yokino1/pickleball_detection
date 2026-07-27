@@ -2,7 +2,7 @@ schema_version: 1
 profile:
   name: temporal
   revision: 1
-  status: maintained
+  status: archived
 
 input:
   source: data/reference/test_2.mp4

@@ -9,9 +9,9 @@ set "TORCH_HOME=D:\ball\.cache\torch"
 set "PIP_CACHE_DIR=D:\ball\.cache\pip"
 
 python apps\track_video.py ^
-  --config configs\tracking_person_contact.yaml ^
+  --config legacy\ball_tracking_handoff\configs\maintained_history\tracking_temporal_r1.yaml ^
   --input data\sideview_raw ^
-  --output-dir outputs\experiments\person_contact\current ^
+  --output-dir outputs\experiments\history\temporal_r1 ^
   --skip-existing
 
 endlocal

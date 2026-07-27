@@ -14,6 +14,20 @@ def detection(x: float, y: float, confidence: float = 0.9) -> BallDetection:
 
 
 class MultiBallTrackerTest(unittest.TestCase):
+    def test_preserves_internal_observation_source_and_json_source_contract(self):
+        tracker = MultiBallTracker(min_hits=1)
+        yolo_detection = detection(100, 100)
+        yolo_detection.source = "yolo"
+
+        observed = tracker.update([yolo_detection], 640, 480)[0]
+        predicted = tracker.update([], 640, 480)[0]
+
+        self.assertEqual(observed.source, "detector")
+        self.assertEqual(observed.observation_source, "yolo")
+        self.assertNotIn("observation_source", observed.to_dict())
+        self.assertEqual(predicted.source, "prediction")
+        self.assertIsNone(predicted.observation_source)
+
     def test_predicts_through_short_detection_gap(self):
         tracker = MultiBallTracker(min_hits=1, max_predict_frames=3, max_missing_frames=5)
         first = tracker.update([detection(100, 100)], 640, 480)[0]
@@ -133,13 +147,19 @@ class MultiBallTrackerTest(unittest.TestCase):
         self.assertTrue(tracker.diagnostics["frame_scale_overridden"])
 
     def test_active_ball_limit_hides_competing_stale_prediction(self):
-        tracker = MultiBallTracker(min_hits=1, max_output_tracks=1, max_predict_frames=3)
+        tracker = MultiBallTracker(
+            min_hits=1,
+            max_output_tracks=1,
+            max_predict_frames=3,
+            observation_first_output=True,
+        )
         first = tracker.update([detection(100, 100)], 1280, 720)
         second = tracker.update([detection(500, 300)], 1280, 720)
 
         self.assertEqual(len(first), 1)
         self.assertEqual(len(second), 1)
         self.assertEqual(second[0].center, [500.0, 300.0])
+        self.assertEqual(second[0].status, "observed")
         self.assertEqual(tracker.diagnostics["eligible_tracks"], 2)
         self.assertEqual(tracker.diagnostics["output_limited_tracks"], 1)
 
@@ -203,6 +223,187 @@ class MultiBallTrackerTest(unittest.TestCase):
             )
         )
         self.assertEqual(with_contact.diagnostics["impact_recoveries"], 1)
+
+    def test_close_primary_observation_recovers_down_to_up_bounce(self):
+        tracker = MultiBallTracker(
+            min_hits=1,
+            max_speed_px_per_second=5000,
+            max_flight_direction_change_deg=60,
+            direction_gate_min_speed_px_per_second=10,
+            direction_gate_min_hits=2,
+            require_contact_for_impact_recovery=True,
+            bounce_recovery_enabled=True,
+            bounce_recovery_sources=["yolo"],
+            bounce_recovery_min_downward_speed_px_per_second=100,
+            bounce_recovery_min_upward_speed_px_per_second=40,
+            bounce_recovery_min_horizontal_speed_px_per_second=40,
+            bounce_recovery_max_displacement_px=35,
+        )
+        first = detection(100, 100)
+        first.source = "yolo"
+        descending = detection(110, 115)
+        descending.source = "yolo"
+        rebound = detection(118, 110)
+        rebound.source = "yolo"
+        accelerating_rebound = detection(126, 96)
+        accelerating_rebound.source = "yolo"
+
+        original = tracker.update([first], 1280, 720, timestamp_s=0.0)[0]
+        tracker.update([descending], 1280, 720, timestamp_s=1 / 30)
+        recovered = tracker.update([rebound], 1280, 720, timestamp_s=2 / 30)
+        stabilized = tracker.update(
+            [accelerating_rebound],
+            1280,
+            720,
+            timestamp_s=3 / 30,
+        )
+
+        self.assertEqual([item.track_id for item in recovered], [original.track_id])
+        self.assertEqual(recovered[0].status, "observed")
+        self.assertLess(recovered[0].velocity[1], 0.0)
+        self.assertEqual([item.track_id for item in stabilized], [original.track_id])
+        self.assertEqual(stabilized[0].status, "observed")
+        self.assertLess(stabilized[0].velocity[1], recovered[0].velocity[1])
+        self.assertEqual(tracker.diagnostics["bounce_recoveries"], 1)
+
+    def test_bounce_recovery_rejects_distant_direction_reversal(self):
+        tracker = MultiBallTracker(
+            min_hits=1,
+            max_speed_px_per_second=10000,
+            max_flight_direction_change_deg=60,
+            direction_gate_min_speed_px_per_second=10,
+            direction_gate_min_hits=2,
+            require_contact_for_impact_recovery=True,
+            bounce_recovery_enabled=True,
+            bounce_recovery_sources=["yolo"],
+            bounce_recovery_min_downward_speed_px_per_second=100,
+            bounce_recovery_min_upward_speed_px_per_second=40,
+            bounce_recovery_min_horizontal_speed_px_per_second=40,
+            bounce_recovery_max_displacement_px=35,
+        )
+        first = detection(100, 100)
+        first.source = "yolo"
+        descending = detection(110, 115)
+        descending.source = "yolo"
+        distant_reversal = detection(200, 50)
+        distant_reversal.source = "yolo"
+
+        original = tracker.update([first], 1280, 720, timestamp_s=0.0)[0]
+        tracker.update([descending], 1280, 720, timestamp_s=1 / 30)
+        outputs = tracker.update(
+            [distant_reversal],
+            1280,
+            720,
+            timestamp_s=2 / 30,
+        )
+
+        original_output = next(
+            item for item in outputs if item.track_id == original.track_id
+        )
+        self.assertEqual(original_output.status, "predicted")
+        self.assertEqual(tracker.diagnostics["bounce_recoveries"], 0)
+
+    def test_close_bounce_is_not_blocked_by_player_contact_zone(self):
+        tracker = MultiBallTracker(
+            min_hits=1,
+            max_speed_px_per_second=5000,
+            max_flight_direction_change_deg=60,
+            direction_gate_min_speed_px_per_second=10,
+            direction_gate_min_hits=2,
+            require_contact_for_impact_recovery=True,
+            bounce_recovery_enabled=True,
+            bounce_recovery_sources=["yolo"],
+            bounce_recovery_min_downward_speed_px_per_second=100,
+            bounce_recovery_min_upward_speed_px_per_second=40,
+            bounce_recovery_min_horizontal_speed_px_per_second=40,
+            bounce_recovery_max_displacement_px=35,
+            bounce_recovery_require_no_contact=False,
+        )
+        first = detection(100, 100)
+        first.source = "yolo"
+        descending = detection(110, 115)
+        descending.source = "yolo"
+        rebound = detection(118, 110)
+        rebound.source = "yolo"
+        contact_zone = [[80, 80, 140, 160]]
+
+        original = tracker.update(
+            [first],
+            1280,
+            720,
+            timestamp_s=0.0,
+            contact_zones=contact_zone,
+        )[0]
+        tracker.update(
+            [descending],
+            1280,
+            720,
+            timestamp_s=1 / 30,
+            contact_zones=contact_zone,
+        )
+        recovered = tracker.update(
+            [rebound],
+            1280,
+            720,
+            timestamp_s=2 / 30,
+            contact_zones=contact_zone,
+        )
+
+        self.assertEqual([item.track_id for item in recovered], [original.track_id])
+        self.assertEqual(recovered[0].status, "observed")
+        self.assertLess(recovered[0].velocity[1], 0.0)
+        self.assertEqual(tracker.diagnostics["bounce_recoveries"], 1)
+
+    def test_consecutive_primary_observations_correct_filter_lag(self):
+        tracker = MultiBallTracker(
+            min_hits=2,
+            emit_tentative=False,
+            require_motion_confirmation=True,
+            motion_threshold_px=12,
+            max_speed_px_per_second=3200,
+            frame_scale_override=1.0,
+            default_fps=60,
+            motion_model="constant_acceleration",
+            constant_acceleration_min_observations=4,
+            max_flight_direction_change_deg=60,
+            direction_gate_min_speed_px_per_second=250,
+            direction_gate_min_hits=4,
+            use_nis_gate=True,
+            nis_gate_threshold=0.01,
+            nis_gate_min_hits=4,
+            primary_continuity_recovery_enabled=True,
+            primary_observation_sources=["yolo", "onnxruntime"],
+            primary_continuity_gate_px=55,
+        )
+        points = [
+            (608.0, 207.0),
+            (612.7, 237.6),
+            (605.2, 239.5),
+            (596.2, 244.1),
+            (584.2, 247.4),
+            (571.9, 251.2),
+        ]
+        track_id = None
+        recovery_count = 0
+        for frame_index, (x, y) in enumerate(points):
+            item = detection(x, y)
+            item.source = "yolo"
+            outputs = tracker.update(
+                [item],
+                618,
+                720,
+                timestamp_s=frame_index / 60,
+            )
+            recovery_count += tracker.diagnostics[
+                "primary_continuity_recoveries"
+            ]
+            if outputs:
+                track_id = track_id or outputs[0].track_id
+                self.assertEqual(outputs[0].track_id, track_id)
+                self.assertEqual(outputs[0].status, "observed")
+
+        self.assertIsNotNone(track_id)
+        self.assertGreater(recovery_count, 0)
 
     def test_contact_gate_rejects_distant_segment_crossing_player_box(self):
         tracker = MultiBallTracker(

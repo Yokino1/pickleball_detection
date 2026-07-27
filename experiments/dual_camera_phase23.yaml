@@ -1,10 +1,20 @@
 schema_version: 1
 experiment_id: dual_camera_phase23
 status: smoke_validated
+record_type: historical
+superseded_by:
+  profile: pickleball_tracking
+  revision: 9
+  config: configs/tracking.yaml
 owner: detection_tracking
 config:
   profile: person_contact_dual_camera
   revision: 2
+  status: retired_experiment
+  retained_config: null
+  nearest_later_snapshot:
+    revision: 4
+    path: legacy/ball_tracking_handoff/configs/maintained_history/tracking_person_contact_r4.yaml
 hypothesis:
   - A net-bound trajectory can activate a short receiving-camera ROI without merging camera coordinates.
   - Consecutive high-speed motion blobs can assist short YOLO gaps when constrained to an activated ROI.
@@ -22,6 +32,9 @@ validation:
   roi_retry_frames: 3
   fast_motion_proposal_frames: 0
 limitations:
+  - This is a historical revision-2 smoke record, not the current official configuration.
+  - The exact revision-2 YAML is not retained; the archived revision-4 file is a later
+    experiment snapshot and must not be presented as exact phase-23 reproduction.
   - Fast-motion proposals were covered synthetically but did not activate in the 30-frame real smoke.
   - Camera coordinates are independent; no calibrated cross-camera position mapping is claimed.
   - Two-dimensional person boxes do not prove paddle contact.

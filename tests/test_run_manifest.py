@@ -13,7 +13,7 @@ class RunManifestTest(unittest.TestCase):
         partial = artifacts.partial()
 
         self.assertEqual(artifacts.manifest.name, "sample_manifest.json")
-        self.assertEqual(partial.video.name, "sample_dual_person_contact.partial.mp4")
+        self.assertEqual(partial.video.name, "sample_dual_tracking.partial.mp4")
         self.assertEqual(partial.manifest.name, "sample_manifest.partial.json")
         self.assertEqual(len(artifacts.final_files()), 5)
 

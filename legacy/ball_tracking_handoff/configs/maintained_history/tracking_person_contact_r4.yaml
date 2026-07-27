@@ -32,8 +32,7 @@ tracker:
   gate_growth_px_per_second: 300.0
   velocity_gate_scale: 0.8
   tentative_gate_px: 150.0
-  # 3200 * 3.0 = 9600 px/s for the current half-court streams, covering
-  # the approximately 9000 px/s 70 mph estimate with a small margin.
+  # 3200 * 3.0 = 9600 px/s for the historical 3840-source half-court crops.
   max_speed_px_per_second: 3200.0
   reference_frame_width: 1280.0
   default_fps: 30.0
@@ -116,9 +115,7 @@ runtime:
     left_net_edge: right
     right_net_edge: left
   dual_camera_streams:
-    # Cropping the 3840 px source into two 1920 px views does not reduce
-    # pixels-per-metre inside either half. Preserve the original 3840/1280
-    # tracking scale instead of deriving 1920/1280 from the crop width.
+    # Historical fixed scale for two 1920 crops from one 3840 source.
     left:
       frame_scale_override: 3.0
     right:

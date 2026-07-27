@@ -1,14 +1,25 @@
 # Live Runtime Boundary
 
-This directory is reserved for the robot runtime and intentionally contains no
-camera- or board-specific implementation yet.
+This directory owns reusable robot-runtime contracts. It still contains no
+camera-driver, RKNN-context or robot-control implementation.
 
-Future modules belong here:
+Implemented modules:
 
 ```text
-capture/              concurrent camera acquisition and capture timestamps
-synchronization/      bounded frame pairing, skew accounting and stale-frame drop
-inference/            RKNN/ONNX paired-frame scheduling and accelerator ownership
+frame_packet.py       timestamped left/right frame and paired-frame contracts
+synchronization/      bounded queues, timestamp pairing and stale-frame accounting
+```
+
+The synchronization components are hardware-independent and accept frames from
+future concurrent capture workers. They reject duplicate or out-of-order
+packets, pair frames within a configured capture-time tolerance, discard the
+older side when skew is too large and expose capacity/stale-drop diagnostics.
+
+Future board-specific modules belong here:
+
+```text
+capture/              concurrent camera acquisition and hardware timestamps
+inference/            RKNN paired-frame scheduling and accelerator ownership
 outputs/              non-blocking robot telemetry and optional diagnostics
 ```
 

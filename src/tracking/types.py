@@ -139,6 +139,7 @@ class BallTrack:
     missing_frames: int = 0                       # consecutive frames without detection
     missing_time_ms: float = 0.0                  # elapsed time without detection
     source: str = "none"                          # "detector" | "prediction" | "none"
+    observation_source: Optional[str] = None      # internal detector source; omitted from JSON output
     roi: Optional[list[float]] = None             # [x1, y1, x2, y2] suggested search region
     age: int = 0                                  # frames since this track was created
     hits: int = 0                                 # accepted detector observations

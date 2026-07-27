@@ -1,0 +1,86 @@
+schema_version: 1
+profile:
+  name: mainline
+  revision: 1
+  status: archived
+
+input:
+  source: data/reference/test_2.mp4
+
+detector:
+  backend: auto
+  model: artifacts/models/ball_best.pt
+  ball_class_id: 0
+  imgsz: 960
+  low_conf: 0.15
+  iou_threshold: 0.50
+  max_detections: 32
+  duplicate_iou_threshold: 0.20
+  duplicate_center_scale: 0.75
+  duplicate_center_px: 6.0
+  device: null
+  exclude_region: null
+
+tracker:
+  high_conf: 0.25
+  low_conf: 0.15
+  min_hits: 2
+  max_prediction_ms: 120.0
+  max_missing_ms: 350.0
+  base_gate_px: 55.0
+  max_gate_px: 180.0
+  gate_growth_px_per_second: 300.0
+  velocity_gate_scale: 0.8
+  tentative_gate_px: 150.0
+  max_speed_px_per_second: 2400.0
+  reference_frame_width: 1280.0
+  default_fps: 30.0
+  require_motion_confirmation: true
+  motion_threshold_px: 12.0
+  max_stationary_ms: 1500.0
+  unconfirmed_max_ms: 1500.0
+  max_output_tracks: 1
+  impact_recovery_gate_px: 260.0
+  impact_recovery_min_speed_px_per_second: 300.0
+  impact_recovery_min_missing_ms: 20.0
+  max_flight_direction_change_deg: 75.0
+  direction_gate_min_speed_px_per_second: 250.0
+  direction_gate_min_hits: 3
+  prediction_min_confidence: 0.15
+  fast_prediction_speed_px_per_second: 800.0
+  fast_max_prediction_ms: 60.0
+  prediction_velocity_decay: 0.90
+  min_motion_speed_px_per_second: 16.0
+  confidence_decay: 0.82
+  process_noise: 1200.0
+  measurement_noise: 4.0
+  max_tracks: 32
+  emit_tentative: false
+
+runtime:
+  detector_interval: 1
+  fail_on_detector_error: true
+  temporal_motion:
+    enabled: false
+    analysis_width: 640
+    difference_threshold: 18
+    min_motion_fraction: 0.015
+    region_scale: 1.5
+    min_region_radius_px: 8
+    max_global_motion_fraction: 0.35
+    blur_kernel: 5
+    dilation_iterations: 2
+  camera_motion:
+    enabled: true
+    analysis_width: 640
+    max_corners: 300
+    min_inliers: 20
+    max_shift_px: 80.0
+    ransac_threshold_px: 2.5
+
+output:
+  video: outputs/experiments/single/mainline/tracking_overlay.mp4
+  jsonl: outputs/experiments/single/mainline/tracking.jsonl
+  codec: mp4v
+  trail_length: 10
+  draw_raw_detections: false

@@ -1,6 +1,6 @@
 # ADR 0002: Dual-Camera 60 FPS Edge Runtime
 
-Status: Accepted for architecture; hardware SKU pending confirmation
+Status: Accepted; RK3588S SoC confirmed; complete board environment pending
 
 ## Context
 
@@ -9,10 +9,9 @@ The product target is two physical cameras, one per half court, both capturing a
 runner: it reads an already synchronized file pair, processes the left pipeline
 and then the right pipeline, and combines their results.
 
-The likely board family is Rockchip RK3588S-class hardware. The exact board,
-memory, camera interface, operating system, NPU runtime and power mode are not yet
-frozen. `RK3688S` is not used as a release identifier until the hardware label is
-confirmed.
+The SoC is confirmed as Rockchip RK3588S. The exact complete board/carrier,
+memory, camera interface, operating system, NPU runtime, cooling and power mode
+are not yet frozen.
 
 At 60 FPS the frame-pair period is 16.67 ms. Running the ball detector on every
 frame means 120 ball images per second. Running the person detector every five
@@ -42,9 +41,12 @@ two capture workers
   instead of allowing control latency to grow without bound.
 - Left and right trackers retain independent pixel coordinate systems and
   camera-specific scale, play-area and spectator-exclusion configuration.
-- Cross-camera switching must become a time-bounded handoff state machine. A
-  source miss plus an arbitrary receiver detection is not sufficient for the
-  production release.
+- Production cross-camera switching must use a time-bounded state machine. The
+  offline revision-9 coordinator already applies strict arming, entry ROI,
+  consecutive confirmation and locking to auxiliary `fast_motion` candidates,
+  but a confirmed primary YOLO/ONNX observation may still preempt an old-side
+  prediction without an armed handoff. That recall-first exception must be
+  reconciled with production transition evidence before robot release.
 - Rendering, MP4 encoding and verbose JSONL are diagnostics and must not block
   the control path.
 
@@ -58,8 +60,8 @@ These gates are measured on the final board, camera drivers and power mode:
   pipelined equivalent with no accumulating latency;
 - capture timestamp skew and dropped-pair counts recorded for every run;
 - 30-minute soak without memory growth, thermal collapse or timestamp drift;
-- RKNN INT8/FP16 accuracy compared with the ONNX reference on the same fixed
-  dual-camera regression set.
+- every precision supported by the frozen RKNN toolchain compared with the ONNX
+  reference on the same fixed dual-camera regression set.
 
 ## Code ownership
 
@@ -78,7 +80,7 @@ concerns must not be added directly to its frame loop.
 - Batch 2 is a benchmark candidate, not a hard-coded assumption.
 - The current ONNX Runtime edge profile remains a portable reference, not the
   RK3588S release runtime.
-- A release RKNN profile is created only after the exact board and converted
+- A release RKNN profile is created only after the complete board environment and converted
   model are available.
 - Full-frame 960-pixel inference on both 60 FPS streams is not assumed feasible;
   model size, input size and runtime are selected from measured recall and

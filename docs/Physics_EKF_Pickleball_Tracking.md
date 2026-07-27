@@ -31,13 +31,16 @@
 Video frame
     |
     v
-Ultralytics ball detector
+Camera motion estimator
+    |
+    v
+Ball detector (PT or ONNX)
     |
     v
 Detection filtering and deduplication
     |
     v
-Camera motion compensation
+Temporal motion evidence
     |
     v
 MultiBallTracker
@@ -410,35 +413,29 @@ prediction_ms =
 
 ---
 
-## 10. 配置建议
+## 10. 当前配置结构
 
-建议新增参数时保持默认关闭，逐项完成消融测试：
+当前正式字段直接位于 `tracker`，不存在 `physics_gating` 或
+`constant_acceleration` 嵌套配置。关键结构如下：
 
 ```yaml
 tracker:
-  motion_model: constant_velocity
-
-  physics_gating:
-    enabled: false
-    use_nis_gate: true
-    nis_gate_threshold: 9.21
-    use_acceleration_gate: true
-    max_acceleration_px_per_second2: 12000.0
-    acceleration_cost_weight: 0.15
-    use_turn_angle_gate: true
-    min_turn_speed_px_per_second: 250.0
-    max_flight_turn_angle_deg: 65.0
-    turn_angle_cost_weight: 0.15
-
-  constant_acceleration:
-    enabled: false
-    min_observations: 4
-    acceleration_decay: 0.80
+  motion_model: constant_acceleration
+  constant_acceleration_min_observations: 4
+  max_acceleration_px_per_second2: 12000.0
+  acceleration_decay: 0.70
+  use_nis_gate: true
+  nis_gate_threshold: 10.75
+  max_observed_acceleration_px_per_second2: 16000.0
+  max_flight_direction_change_deg: 60.0
+  continuous_prediction_horizon: true
 ```
 
-以上数值只是初始实验值，均以 `reference_frame_width` 为基准，不能在缺少回归数据的情况下直接认定为最终参数。
+以上是 revision 9 的当前正式值，仍属于二维图像空间经验参数。真实机位必须
+通过固定回归验证，不能把这些值解释为真实世界物理常数。
 
-不建议一次同时启用所有约束。推荐顺序：
+新增物理规则时仍应逐项做消融，避免一次改变多个门控后无法定位召回退化。
+历史上采用的验证顺序为：
 
 1. NIS 门控；
 2. 转向角软成本；
@@ -448,11 +445,9 @@ tracker:
 
 ---
 
-## 11. 当前实验实现
+## 11. 当前正式实现
 
-当前代码已经提供一版可选物理约束实验，通过
-`configs/tracking_physics.yaml` 启用，不改变默认
-`configs/tracking.yaml`：
+当前 `configs/tracking.yaml` revision 9 已正式启用以下图像空间物理约束：
 
 - 六状态常加速度 KF：`[x, y, vx, vy, ax, ay]`；
 - 连续可靠观测达到 `constant_acceleration_min_observations` 后才使用加速度；
@@ -464,23 +459,27 @@ tracker:
   `fast_max_prediction_ms` 之间连续缩短；
 - JSONL 输出 `motion_model`、`acceleration`、NIS 拒绝数量和加速度拒绝数量。
 
-该版本仍然是**图像空间物理约束实验**，加速度单位是
+该实现仍然只是**图像空间物理约束**，加速度单位是
 `px/s^2`，没有使用真实重力、空气阻力、三维球场坐标或
 地面碰撞方程。
 
-运行入口：
-
-```bat
-scripts\run_physics_tracking.cmd
-```
+正式运行入口为 `apps/track_dual_halves.py`；`apps/track_video.py` 仅用于单侧
+物理门控和关联诊断。
 
 结果写入：
 
 ```text
-outputs/experiments/desktop_ab/physics
+outputs/experiments/current
 ```
 
-## 12. 实施阶段
+旧 physics r1 配置和 CMD 仅保存在
+`legacy/ball_tracking_handoff/configs/maintained_history/` 与
+`legacy/ball_tracking_handoff/scripts/maintained_history/`，用于显式历史回归。
+
+## 12. 历史实施阶段与剩余项
+
+以下阶段用于说明代码演进，不再表示当前优先级。revision 9 已完成 CA、NIS、
+加速度/方向门控和轻量连续帧过滤的基础实现；真实三维物理仍未开始。
 
 ### 阶段 A：增强现有常速度模型
 
@@ -491,7 +490,7 @@ outputs/experiments/desktop_ab/physics
 - 先只作为关联成本，不立即硬拒绝；
 - 使用固定回归视频调参。
 
-这是当前最优先、风险最低的阶段。
+该阶段的基础诊断和门控已经完成。
 
 ### 阶段 B：事件感知和常加速度实验
 
@@ -501,12 +500,18 @@ outputs/experiments/desktop_ab/physics
 - 比较 CV、CA 和切换模型；
 - 验证不同 FPS、分辨率和球速。
 
+CA 与 impact recovery 重置已实现；显式 `flight/impact/missing` 事件状态机和
+完整固定视频验收仍未完成。
+
 ### 阶段 C：轻量连续帧检测
 
 - 帧差运动区域辅助候选过滤；
 - 预测 ROI 与全帧回退；
 - 对相机抖动和固定 overlay 做专项测试；
 - 评估板端推理速度和量化损失。
+
+帧差过滤、ROI retry 和 fast-motion 辅助已实现；板端量化与滚动球误拒验收
+仍未完成。
 
 ### 阶段 D：标定后的三维物理模型
 

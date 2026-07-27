@@ -10,6 +10,8 @@
    `*_manifest.json` 自动记录。
 4. 临时 smoke 不需要登记；影响设计决策或准备提升为正式版本的实验才登记。
 5. 实验结论写入记录，算法行为变化同步写入 `CHANGELOG.md`。
+6. 历史实验不得改写成当前配置身份；使用 `record_type: historical`、
+   `superseded_by` 和 `retained_config` 说明其可复现状态。
 
 输出目录约定见 [outputs/README.md](../outputs/README.md)，维护流程见
 [docs/MAINTENANCE.md](../docs/MAINTENANCE.md)。

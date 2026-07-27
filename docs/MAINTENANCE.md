@@ -16,7 +16,7 @@ src/tracking/*
 
 - `apps/` 只解析参数、选择输入和调用核心流程。
 - `src/tracking/factory.py` 统一装配 detector、tracker 和 pipeline。
-- `src/tracking/dual_camera/` 只处理双路同步、全局单球协调、渲染和输出。
+- `src/tracking/dual_camera/` 只处理离线成对视频、全局单球协调、渲染和输出。
 - `src/runtime/` 只处理未来板端实时采集、时间戳配对、推理调度和非阻塞输出；
   在真实实现前不放置占位算法。
 - 核心模块不能导入 `apps`，活动代码不能导入 `legacy`。
@@ -62,7 +62,7 @@ YYYYMMDD_<dataset>_<profile>-r<revision>_<purpose>
 示例：
 
 ```text
-20260725_full_clean_person-contact-r2_phase23
+20260727_full_clean_pickleball-r9_observation-continuity
 ```
 
 双摄入口默认拒绝覆盖同名正式结果：
@@ -114,7 +114,37 @@ YYYYMMDD_<dataset>_<profile>-r<revision>_<purpose>
 6. 保存 manifest 和实验结论；
 7. 达到验收门槛后再提升正式 profile 或发布版本。
 
-## 6. Smoke 和实验生命周期
+当前正式算法的稳定身份是：
+
+```text
+profile.name = pickleball_tracking
+profile.revision = 9
+profile.status = maintained
+```
+
+不能通过复制 `tracking_v9_final.yaml` 的方式发布新版本。行为或正式默认参数发生
+变化时，先更新测试和 `CHANGELOG.md`，再明确决定是否递增
+`profile.revision`。结构不兼容才递增 `schema_version`。
+
+## 6. 文档权威来源与更新触发
+
+同一事实只允许有一个主要权威来源，其他文档引用它：
+
+| 内容 | 权威来源 | 必须同步更新的时机 |
+| --- | --- | --- |
+| 当前正式/历史版本 | `docs/VERSIONS.md`、`configs/tracking.yaml` | profile、revision、状态或默认入口变化 |
+| 精确追踪顺序和阈值 | `docs/TRACKING_RULES.md`、`configs/tracking.yaml` | pipeline 顺序、门控或参数变化 |
+| 模块边界 | `docs/ARCHITECTURE.md`、ADR | 新模块、依赖方向或运行时职责变化 |
+| RK3588S、量化和验收 | `docs/DEPLOYMENT.md` | 工具链、模型格式、性能预算或验收结论变化 |
+| 未标定参数 | `docs/CAMERA_CALIBRATION_TODO.md` | 获得真实相机/载板测量后逐项关闭 |
+| 当前可交接状态 | `docs/HANDOFF.md` | 每次里程碑交付、人员交接或板端阶段变化 |
+| 历史行为变化 | `CHANGELOG.md` | 每次可见行为、输出契约或版本关系变化 |
+
+阈值不能只改 YAML 不改 `TRACKING_RULES.md`；命令不能只改 CLI 不改 README；
+输出文件名不能只改代码不改 `outputs/README.md` 和交接文档。审查时以代码和 YAML
+实际行为为准，发现冲突必须修正文档或明确登记为已知缺口。
+
+## 7. Smoke 和实验生命周期
 
 Smoke 只回答“程序能否完整运行、输出结构是否正确”，不能证明算法有效。
 
@@ -138,11 +168,46 @@ python tools\cleanup_smoke_outputs.py --older-than-days 7 --apply
 实验结果放在 `outputs/experiments/`。只有影响决策的实验才在 `experiments/`
 登记。正式候选放在 `outputs/production/`，并保留指标报告。
 
-## 7. 每次交付前检查
+## 8. Git 暂存与资产边界
+
+当前仓库经常包含用户尚未提交的历史改动，禁止用清理或回退命令处理不属于当前
+任务的文件。每次工作开始先运行 `git status`，提交前再次逐文件复查。
+
+- 禁止使用 `git add .`；
+- 用户要求的“CMD 代码”指可直接粘贴到 Conda CMD 的命令块；活动目录不创建
+  `run_*.cmd` 运行文件；
+- 只显式暂存本次确认的源码、配置、测试、文档和小型实验元数据；
+- 暂存列表不得包含 `mp4`、`pt`、`onnx`、`engine`、`rknn`、`docx`、数据集、
+  `data/`、`outputs/`、缓存或训练中间结果；
+- 根目录业务 DOCX 只作背景资料，不自动提交；
+- 不覆盖、回退或清理已有未提交改动；
+- 提交前使用 `git diff --cached --name-status` 和
+  `git diff --cached --check` 审查暂存内容；
+- 未经明确要求，不 commit、push 或创建 PR。
+
+## 9. 量化与模型交接
+
+量化候选不能只交一个模型文件。每个候选至少同时交付：
+
+- 源 PT、导出 ONNX、RKNN 候选各自的 SHA-256；
+- source Git revision、正式 profile/revision 和完整配置 SHA-256；
+- 精确 Python、Ultralytics、ONNX Runtime、RKNN Toolkit/runtime 版本；
+- 输入尺寸、颜色顺序、归一化、NMS、输出张量和解码约定；
+- 校准数据 revision、数量、抽样方法和不可提交资产位置；
+- FP32/FP16/INT8 同集检测报告及细分场景召回；
+- 固定连续视频的追踪、handoff 和 observation/prediction 比例报告；
+- RK3588S 完整板卡、功耗、散热、延迟、内存、队列和 30 分钟 soak 报告；
+- 已知失败场景、回退模型和回退配置。
+
+ONNX INT8、RKNN INT8 和桌面 PT 是三个不同运行产物，不能因为都写着 INT8 或
+使用同一权重来源就视为等价。
+
+## 10. 每次交付前检查
 
 ```cmd
 D:\anacondaa\envs\torch-cu128\python.exe tools\check_project_refs.py
 D:\anacondaa\envs\torch-cu128\python.exe -m unittest discover -s tests -v
+D:\anacondaa\envs\torch-cu128\python.exe -m compileall -q apps src tools tests
 git diff --check
 git status --short
 ```
@@ -150,7 +215,9 @@ git status --short
 还需确认：
 
 - 没有把视频、数据集、模型、输出或缓存加入 Git；
-- 三套正式配置的默认输出没有被实验分支改变；
+- `configs/tracking.yaml` 仍是唯一默认正式入口，历史配置没有被活动代码引用；
 - JSONL 结构变化已经记录并有兼容策略；
-- 实验结论不是只凭一段可视化视频得出。
-- 板端测试记录准确 SKU、两路 60 FPS 时间戳偏差、丢帧、队列深度和热稳定性。
+- 实验结论不是只凭一段可视化视频得出；
+- 板端测试记录 RK3588S 完整板卡/载板、两路 60 FPS 时间戳偏差、丢帧、
+  队列深度和热稳定性。
+- `docs/HANDOFF.md` 的已实现、未实现和已知风险与代码一致。
