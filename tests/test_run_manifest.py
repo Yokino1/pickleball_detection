@@ -8,14 +8,25 @@ from src.tracking.run_manifest import create_manifest
 
 
 class RunManifestTest(unittest.TestCase):
-    def test_dual_artifact_names_include_manifest_and_partial_variants(self):
+    def test_dual_artifacts_are_grouped_in_one_run_directory(self):
         artifacts = DualRunArtifacts.for_run(Path("outputs"), "sample")
         partial = artifacts.partial()
 
-        self.assertEqual(artifacts.manifest.name, "sample_manifest.json")
-        self.assertEqual(partial.video.name, "sample_dual_tracking.partial.mp4")
-        self.assertEqual(partial.manifest.name, "sample_manifest.partial.json")
+        self.assertEqual(artifacts.run_dir, Path("outputs") / "sample")
+        self.assertEqual(artifacts.video.name, "dual_tracking.mp4")
+        self.assertEqual(artifacts.manifest.name, "manifest.json")
+        self.assertEqual(partial.video.name, "dual_tracking.partial.mp4")
+        self.assertEqual(partial.manifest.name, "manifest.partial.json")
+        self.assertTrue(
+            all(path.parent == artifacts.run_dir for path in artifacts.final_files())
+        )
         self.assertEqual(len(artifacts.final_files()), 5)
+
+    def test_dual_artifact_run_id_cannot_escape_output_directory(self):
+        for run_id in ("", ".", "..", "../outside", r"..\outside"):
+            with self.subTest(run_id=run_id):
+                with self.assertRaises(ValueError):
+                    DualRunArtifacts.for_run(Path("outputs"), run_id)
 
     def test_manifest_records_profile_and_config_hash(self):
         with tempfile.TemporaryDirectory() as directory:

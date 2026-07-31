@@ -8,6 +8,11 @@ from pathlib import Path
 
 import cv2
 
+from ...court import (
+    FixedCourtProjector,
+    ProjectionResult,
+    build_court_projection,
+)
 from ..factory import PROJECT_ROOT, build_pipeline
 from ..overlay import TrackingOverlay
 from ..run_manifest import (
@@ -15,6 +20,7 @@ from ..run_manifest import (
     create_manifest,
     write_manifest,
 )
+from ..types import CourtInfo
 from .artifacts import DualRunArtifacts, validate_written_outputs
 from .coordinator import CrossCameraHandoffAdvisor, CrossHalfBallCoordinator
 from .rendering import HEADER_HEIGHT, display_result, make_header
@@ -64,9 +70,25 @@ def run_pair(
         config,
         frame_widths,
     )
+    (
+        court_projector,
+        court_renderer,
+        court_event_interpreter,
+    ) = build_court_projection(
+        config,
+        {
+            "left": (left_width, left_height),
+            "right": (right_width, right_height),
+        },
+    )
+    court_panel_width = (
+        court_renderer.panel_width(left_height)
+        if court_renderer is not None
+        else 0
+    )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
     artifacts = DualRunArtifacts.for_run(output_dir, run_id)
+    artifacts.run_dir.mkdir(parents=True, exist_ok=True)
     partial = artifacts.partial()
     partial.remove()
 
@@ -90,6 +112,8 @@ def run_pair(
             "frame_scale_mode": frame_scale_mode,
             "frame_scale_overrides": frame_scale_overrides,
             "header_height": HEADER_HEIGHT,
+            "court_projection_enabled": court_projector is not None,
+            "court_panel_width": court_panel_width,
             "run_note": run_note,
         },
     )
@@ -98,7 +122,7 @@ def run_pair(
     output_config = config.get("output", {})
     fourcc = cv2.VideoWriter_fourcc(*output_config.get("codec", "mp4v"))
     output_size = (
-        left_width + right_width,
+        left_width + right_width + court_panel_width,
         left_height + HEADER_HEIGHT,
     )
     writer = cv2.VideoWriter(
@@ -171,6 +195,13 @@ def run_pair(
     roi_retry_frames = 0
     fast_motion_proposal_frames = 0
     trail_reset_frames = 0
+    projected_frames = 0
+    projected_predicted_frames = 0
+    projected_outside_frames = 0
+    bounce_candidate_frames = 0
+    out_of_bounds_bounce_candidate_frames = 0
+    second_bounce_candidate_frames = 0
+    paddle_hit_candidate_frames = 0
     previous_rendered_tracks: dict[
         str,
         tuple[int | None, tuple[float, float], float] | None,
@@ -249,6 +280,14 @@ def run_pair(
                     },
                     handoff=handoff_status,
                 )
+                court_projection = (
+                    court_projector.project_track(
+                        selection.active_side,
+                        selection.track,
+                    )
+                    if court_projector is not None
+                    else None
+                )
                 trail_reset_reason = _trail_reset_reason(
                     selection,
                     timestamp_s=timestamp_s,
@@ -268,6 +307,35 @@ def run_pair(
                         left_overlay.reset()
                     elif selection.active_side == "right":
                         right_overlay.reset()
+                    if (
+                        court_renderer is not None
+                        and trail_reset_reason != "camera_side_switch"
+                    ):
+                        court_renderer.reset()
+                if (
+                    court_event_interpreter is not None
+                    and court_projection is not None
+                ):
+                    active_result = (
+                        left_result
+                        if selection.active_side == "left"
+                        else right_result
+                    )
+                    court_projection.event = court_event_interpreter.update(
+                        court_projection,
+                        track=selection.track,
+                        active_side=selection.active_side,
+                        local_track_id=selection.local_track_id,
+                        tracker_diagnostics={
+                            "left": left_result.diagnostics.get("tracker", {}),
+                            "right": right_result.diagnostics.get("tracker", {}),
+                        },
+                        frame_scale_overrides=frame_scale_overrides,
+                        discontinuity_reason=trail_reset_reason,
+                        timestamp_s=timestamp_s,
+                        frame_index=processed,
+                        eligible_players=active_result.players,
+                    ).to_dict()
                 if handoff_advisor is not None:
                     handoff_advisor.update(
                         selection,
@@ -276,6 +344,37 @@ def run_pair(
                             "left": left_width,
                             "right": right_width,
                         },
+                    )
+                if court_projection is not None and court_projector is not None:
+                    _attach_court_info(
+                        left_result,
+                        right_result,
+                        court_projection,
+                        court_projector,
+                    )
+                    projected_frames += int(court_projection.projection_valid)
+                    projected_predicted_frames += int(
+                        court_projection.projection_valid
+                        and court_projection.predicted
+                    )
+                    projected_outside_frames += int(
+                        court_projection.projection_valid
+                        and court_projection.inside_court is False
+                    )
+                    event_names = set(
+                        (court_projection.event or {}).get("events", [])
+                    )
+                    bounce_candidate_frames += int(
+                        "bounce_candidate" in event_names
+                    )
+                    out_of_bounds_bounce_candidate_frames += int(
+                        "out_of_bounds_bounce_candidate" in event_names
+                    )
+                    second_bounce_candidate_frames += int(
+                        "second_bounce_candidate" in event_names
+                    )
+                    paddle_hit_candidate_frames += int(
+                        "paddle_hit_candidate" in event_names
                     )
 
                 left_handle.write(
@@ -295,6 +394,7 @@ def run_pair(
                             left_result,
                             right_result,
                             trail_reset_reason=trail_reset_reason,
+                            court_projection=court_projection,
                         ),
                         ensure_ascii=False,
                     )
@@ -332,13 +432,22 @@ def run_pair(
                     timestamp_s,
                     previous_rendered_tracks,
                 )
-                combined = cv2.hconcat([left_rendered, right_rendered])
+                rendered_parts = [left_rendered, right_rendered]
+                if court_renderer is not None and court_projection is not None:
+                    rendered_parts.append(
+                        court_renderer.render(
+                            left_rendered.shape[0],
+                            court_projection,
+                        )
+                    )
+                combined = cv2.hconcat(rendered_parts)
                 combined = cv2.vconcat(
                     [
                         make_header(
                             combined.shape[1],
                             left_rendered.shape[1],
                             selection,
+                            court_panel_width=court_panel_width,
                         ),
                         combined,
                     ]
@@ -351,6 +460,17 @@ def run_pair(
                     (0, 255, 0),
                     2,
                 )
+                if court_panel_width > 0:
+                    court_divider_x = (
+                        left_rendered.shape[1] + right_rendered.shape[1]
+                    )
+                    cv2.line(
+                        combined,
+                        (court_divider_x, 0),
+                        (court_divider_x, combined.shape[0] - 1),
+                        (255, 160, 0),
+                        2,
+                    )
                 writer.write(combined)
                 processed += 1
                 if processed % 100 == 0:
@@ -405,6 +525,17 @@ def run_pair(
                 "roi_retry_frames": roi_retry_frames,
                 "fast_motion_proposal_frames": fast_motion_proposal_frames,
                 "trail_reset_frames": trail_reset_frames,
+                "projected_frames": projected_frames,
+                "projected_predicted_frames": projected_predicted_frames,
+                "projected_outside_frames": projected_outside_frames,
+                "bounce_candidate_frames": bounce_candidate_frames,
+                "out_of_bounds_bounce_candidate_frames": (
+                    out_of_bounds_bounce_candidate_frames
+                ),
+                "second_bounce_candidate_frames": (
+                    second_bounce_candidate_frames
+                ),
+                "paddle_hit_candidate_frames": paddle_hit_candidate_frames,
             },
         )
         write_manifest(partial.manifest, manifest)
@@ -423,6 +554,68 @@ def run_pair(
     print(f"[jsonl] {artifacts.global_jsonl}")
     print(f"[manifest] {artifacts.manifest}")
     return processed
+
+
+def _court_info(
+    projection: ProjectionResult,
+    projector: FixedCourtProjector,
+    side: str,
+) -> CourtInfo:
+    calibration = projector.calibration_for(side)
+    is_active = side == projection.active_side
+    if is_active:
+        return CourtInfo(
+            coordinate_system=projection.coordinate_system,
+            coordinate_system_version=projection.coordinate_system_version,
+            active_side=projection.active_side,
+            calibration_id=projection.calibration_id,
+            calibration_source=projection.calibration_source,
+            image_xy=projection.image_xy,
+            projection_status=projection.projection_status,
+            projection_valid=projection.projection_valid,
+            homography_available=projection.homography_available,
+            ball_court_xy=projection.ball_court_xy,
+            reprojection_error_px=projection.reprojection_error_px,
+            track_status=projection.track_status,
+            observed=projection.observed,
+            predicted=projection.predicted,
+            inside_court=projection.inside_court,
+            event=projection.event,
+            projection_warnings=projection.projection_warnings,
+        )
+    return CourtInfo(
+        coordinate_system=projector.layout.coordinate_system,
+        coordinate_system_version=projector.layout.coordinate_system_version,
+        active_side=projection.active_side,
+        calibration_id=(
+            calibration.calibration_id if calibration is not None else None
+        ),
+        calibration_source=(
+            calibration.calibration_source
+            if calibration is not None
+            else None
+        ),
+        projection_status="none",
+        projection_valid=False,
+        homography_available=bool(
+            calibration and calibration.homography_available
+        ),
+        projection_warnings=(
+            list(calibration.warnings)
+            if calibration is not None
+            else ["calibration_unavailable"]
+        ),
+    )
+
+
+def _attach_court_info(
+    left_result,
+    right_result,
+    projection: ProjectionResult,
+    projector: FixedCourtProjector,
+) -> None:
+    left_result.court = _court_info(projection, projector, "left")
+    right_result.court = _court_info(projection, projector, "right")
 
 
 def _read_and_validate_metadata(left_capture, right_capture) -> dict:
@@ -665,6 +858,7 @@ def _global_frame_record(
     right_result,
     *,
     trail_reset_reason: str | None = None,
+    court_projection: ProjectionResult | None = None,
 ) -> dict:
     def side_record(result) -> dict:
         return {
@@ -681,6 +875,11 @@ def _global_frame_record(
         "frame_index": frame_index,
         "timestamp": timestamp_s,
         "global_ball": selection.to_dict(),
+        "court": (
+            court_projection.to_dict()
+            if court_projection is not None
+            else None
+        ),
         "coordinator": coordinator.diagnostics(),
         "handoff": (
             handoff_advisor.diagnostics(timestamp_s)

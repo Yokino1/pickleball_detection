@@ -8,15 +8,17 @@
 apps / tools
     |
     v
-src/tracking/factory.py
-    |
-    v
-src/tracking/*
+流程编排
+    |--------------------------|
+    v                          v
+src/tracking/*              src/court/*
 ```
 
 - `apps/` 只解析参数、选择输入和调用核心流程。
 - `src/tracking/factory.py` 统一装配 detector、tracker 和 pipeline。
 - `src/tracking/dual_camera/` 只处理离线成对视频、全局单球协调、渲染和输出。
+- `src/court/` 只读消费最终全局球；投影和候选事件不得反馈到 `src/tracking`。
+- `ground_detection/` 是独立首帧标定上游工具，活动运行时不得 import。
 - `src/runtime/` 只处理未来板端实时采集、时间戳配对、推理调度和非阻塞输出；
   在真实实现前不放置占位算法。
 - 核心模块不能导入 `apps`，活动代码不能导入 `legacy`。
@@ -24,6 +26,7 @@ src/tracking/*
 
 现有 `src/tracking/dual_camera/runner.py` 是离线成对视频回归入口，不承担
 真实摄像头线程、RKNN 上下文或机器人控制职责。
+完整模块责任和测试归属见 [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md)。
 
 ## 2. 数据和输出目录
 
@@ -68,6 +71,7 @@ YYYYMMDD_<dataset>_<profile>-r<revision>_<purpose>
 双摄入口默认拒绝覆盖同名正式结果：
 
 - 新实验使用新 run ID；
+- 每个 run 自动写入 `<output-dir>/<run_id>/`，产物不与其他 run 平铺混放；
 - 已完成结果可用 `--skip-existing` 跳过；
 - 确认要替换时显式使用 `--overwrite`。
 
@@ -80,8 +84,25 @@ YYYYMMDD_<dataset>_<profile>-r<revision>_<purpose>
 双摄每个 run 自动生成：
 
 ```text
-<run_id>_manifest.json
+<output-dir>/<run_id>/
+  dual_tracking.mp4
+  left_tracking.jsonl
+  right_tracking.jsonl
+  global_tracking.jsonl
+  manifest.json
 ```
+
+二维投影重放单独写入：
+
+```text
+outputs/experiments/court_projection_replay/<run_id>/
+  projection_replay.mp4
+  global_projection.jsonl
+  manifest.json
+```
+
+重放 manifest 必须记录来源 run ID、来源视频/JSONL、`model_inference=false`、
+重放模式和当前配置哈希；来源 run 不得修改或覆盖。
 
 记录内容包括：
 
@@ -135,6 +156,7 @@ profile.status = maintained
 | 当前正式/历史版本 | `docs/VERSIONS.md`、`configs/tracking.yaml` | profile、revision、状态或默认入口变化 |
 | 精确追踪顺序和阈值 | `docs/TRACKING_RULES.md`、`configs/tracking.yaml` | pipeline 顺序、门控或参数变化 |
 | 模块边界 | `docs/ARCHITECTURE.md`、ADR | 新模块、依赖方向或运行时职责变化 |
+| 目录/文件责任 | `docs/PROJECT_STRUCTURE.md` | 新目录、模块、入口或测试归属变化 |
 | RK3588S、量化和验收 | `docs/DEPLOYMENT.md` | 工具链、模型格式、性能预算或验收结论变化 |
 | 未标定参数 | `docs/CAMERA_CALIBRATION_TODO.md` | 获得真实相机/载板测量后逐项关闭 |
 | 当前可交接状态 | `docs/HANDOFF.md` | 每次里程碑交付、人员交接或板端阶段变化 |

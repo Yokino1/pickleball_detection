@@ -12,7 +12,6 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_DIRS = ("apps", "src", "tools", "tests")
 FORBIDDEN_IMPORTS = (
-    "src.court",
     "src.tracking.ball_track",
     "src.tracking.events",
     "src.tracking.pipeline",

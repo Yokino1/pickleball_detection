@@ -18,13 +18,27 @@ class DualRunArtifacts:
 
     @classmethod
     def for_run(cls, output_dir: Path, run_id: str) -> "DualRunArtifacts":
+        if (
+            not run_id
+            or run_id in {".", ".."}
+            or "/" in run_id
+            or "\\" in run_id
+        ):
+            raise ValueError(
+                "run_id must be one non-empty directory name without separators"
+            )
+        run_dir = output_dir / run_id
         return cls(
-            video=output_dir / f"{run_id}_dual_tracking.mp4",
-            left_jsonl=output_dir / f"{run_id}_left_tracking.jsonl",
-            right_jsonl=output_dir / f"{run_id}_right_tracking.jsonl",
-            global_jsonl=output_dir / f"{run_id}_global_tracking.jsonl",
-            manifest=output_dir / f"{run_id}_manifest.json",
+            video=run_dir / "dual_tracking.mp4",
+            left_jsonl=run_dir / "left_tracking.jsonl",
+            right_jsonl=run_dir / "right_tracking.jsonl",
+            global_jsonl=run_dir / "global_tracking.jsonl",
+            manifest=run_dir / "manifest.json",
         )
+
+    @property
+    def run_dir(self) -> Path:
+        return self.video.parent
 
     def final_files(self) -> tuple[Path, ...]:
         return (

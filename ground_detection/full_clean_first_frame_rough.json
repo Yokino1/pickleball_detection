@@ -1,0 +1,27 @@
+{
+  "coordinate_system": "pickleball_full_court_ft",
+  "coordinate_system_version": 1,
+  "purpose": "auxiliary fixed-view projection; approximate four-corner calibration",
+  "cameras": {
+    "left": {
+      "calibration_id": "full_clean_left_frame0_rough_r1",
+      "image_size": [1920, 2160],
+      "keypoints": {
+        "kp0": [-40.0, 1055.0],
+        "kp2": [458.0, 1651.0],
+        "kp6": [1885.0, 895.0],
+        "kp7": [1885.0, 1640.0]
+      }
+    },
+    "right": {
+      "calibration_id": "full_clean_right_frame0_rough_r1",
+      "image_size": [1920, 2160],
+      "keypoints": {
+        "kp6": [5.0, 905.0],
+        "kp7": [100.0, 1640.0],
+        "kp11": [1960.0, 1060.0],
+        "kp13": [1960.0, 1450.0]
+      }
+    }
+  }
+}

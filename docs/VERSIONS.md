@@ -44,6 +44,14 @@ revision 9 的核心原则仍是：
 - 本地 ID 变化或显示位置物理不连续时切断尾迹，但保留当前模型观测；
 - MP4、左右/全局 JSONL 与运行 manifest。
 
+固定机位二维映射是 revision 9 的附加只读输出能力，不构成 revision 10 或第二套
+算法 profile。它只消费全局协调器已经选定的主球，并保留 `observed`/`predicted`
+身份；映射结果不得反馈到检测、关联、预测、物理门控、handoff 或全局球选择。
+左右相机分别以人工关键点标定到 `pickleball_full_court_ft` 坐标系。具体坐标、
+输出契约、越界语义和单目限制见 [`COURT_2D_MAPPING.md`](COURT_2D_MAPPING.md)。
+反弹、界外、二弹和击拍颜色属于同一只读附加层的候选事件，不修改 revision 9
+身份，也不得作为已经验收的裁判结论。
+
 正式入口对左右半场各运行一套本地 pipeline，再执行全局单球协调。单视频入口
 只用于拆分问题和检查某一侧 JSONL；它会忽略双摄协调步骤，不作为当前正式版本
 的独立运行形态。
@@ -98,6 +106,10 @@ legacy/ball_tracking_handoff/scripts/maintained_history/
 `configs/tracking_edge.yaml` 是单路 ONNX Runtime 可移植和量化研究配置，不是
 第二套正式算法版本，也不是已验收的 RK3588S/RKNN 发布包。最终板端配置应在
 当前 revision 9 行为基础上完成转换、量化和性能验收。
+
+`apps/replay_court_projection.py` 只用于固定 R9 结果上的桌面投影调试，不属于
+板端 profile。最终板端必须在线执行检测、追踪、全局选球、二维投影和事件解释，
+不能读取预生成 JSONL 代替实时检测追踪。
 
 ## 尚未冻结但不阻止转正的参数
 

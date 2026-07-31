@@ -147,6 +147,67 @@ runtime:
     frame_scale_mode: paired_crop_total_width
     left: {}
     right: {}
+  court_projection:
+    enabled: true
+    coordinate_system: pickleball_full_court_ft
+    coordinate_system_version: 1
+    panel_width: 1000
+    panel_margin_px: 28
+    outside_margin_ft: 30.0
+    trail_length: 15
+    # Chinese status uses Microsoft YaHei/SimHei on Windows and common
+    # Noto/WenQuanYi CJK fonts on Linux. Set an explicit path on RK3588S.
+    status_font_path: null
+    status_font_size: 48
+    event_interpretation:
+      enabled: true
+      hit_flash_frames: 5
+      ground_min_hold_frames: 3
+      rise_confirm_frames: 2
+      rise_min_speed_px_per_second: 40.0
+      # Read-only event classification. Thresholds are reference-scale image
+      # pixels and are multiplied by the per-side frame scale.
+      kinematic_enabled: true
+      max_observation_gap_ms: 80.0
+      bounce_min_downward_speed_px_per_second: 100.0
+      bounce_min_upward_speed_px_per_second: 40.0
+      # A vertical-dominant impulse supports bounce. A sharp change inside an
+      # existing eligible-player body region supports hit.
+      bounce_max_horizontal_impulse_ratio: 1.5
+      hit_min_direction_change_deg: 35.0
+      hit_min_impulse_px_per_second: 300.0
+      # Reject impossible cross-ID jumps before they can become hit evidence.
+      # Reference-scale pixels/second; multiplied by each stream scale.
+      discontinuity_hit_max_speed_px_per_second: 3200.0
+      event_cooldown_ms: 160.0
+      post_hit_bounce_suppression_ms: 180.0
+      # Not a rule-defined second-bounce time window. This only prevents a
+      # stale bounce from a long-lost previous rally being counted later.
+      rally_state_timeout_ms: 5000.0
+      player_contact_margin_ratio: 0.20
+      # Wider read-only reach zone for a hand/paddle extending beyond the
+      # existing person box. It never changes R9 association or acceptance.
+      player_reach_margin_ratio: 0.35
+      player_foot_band_ratio: 0.18
+    cameras:
+      left:
+        calibration_id: full_clean_left_frame0_rough_r1
+        source: manual_rough_fixed_view
+        image_size: [1920, 2160]
+        keypoints:
+          kp0: [-40.0, 1055.0]
+          kp2: [458.0, 1651.0]
+          kp6: [1885.0, 895.0]
+          kp7: [1885.0, 1640.0]
+      right:
+        calibration_id: full_clean_right_frame0_rough_r1
+        source: manual_rough_fixed_view
+        image_size: [1920, 2160]
+        keypoints:
+          kp6: [5.0, 905.0]
+          kp7: [100.0, 1640.0]
+          kp11: [1960.0, 1060.0]
+          kp13: [1960.0, 1450.0]
   camera_motion:
     enabled: true
     analysis_width: 640

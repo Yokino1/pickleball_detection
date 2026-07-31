@@ -63,6 +63,9 @@ import or depend on them.
 
 ## Module ownership
 
+完整目录、模块责任、测试归属和文档权威关系统一维护在
+[`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md)。本节只描述运行时架构和关键依赖。
+
 - `ball_detector.py`: detector protocol and Ultralytics implementation.
 - `onnx_detector.py`: Torch-free ONNX Runtime implementation and post-processing.
 - `multi_ball_tracker.py`: track lifecycle, association, optional CV/CA Kalman models and physical gating.
@@ -79,11 +82,22 @@ import or depend on them.
 - `run_manifest.py`: reproducible code/config/input/output metadata.
 - `dual_camera/coordinator.py`: global single-ball arbitration and handoff advice.
 - `dual_camera/runner.py`: offline same-index paired-video processing.
+- `dual_camera/projection_replay.py`: inference-free court-panel replay from one completed R9 run.
 - `dual_camera/rendering.py`: side-by-side presentation and header layout.
 - `dual_camera/artifacts.py`: output names, partial promotion and integrity validation.
+- `court/layout.py`: canonical 20 x 44 ft court geometry and shared coordinate definition.
+- `court/calibration.py`: fixed-camera manual keypoints, homography construction and validation.
+- `court/projector.py`: read-only image-to-court projection of the selected global ball.
+- `court/events.py`: read-only candidate bounce/out/second-bounce/hit state interpretation.
+- `court/factory.py`: shared projector/renderer/event-interpreter assembly.
+- `court/renderer.py`: blank court framework, projected point and trail presentation.
 - `runtime/frame_packet.py`: capture-timestamped left/right frame contracts.
 - `runtime/synchronization/queues.py`: bounded latest-frame queues and drop accounting.
 - `runtime/synchronization/pairer.py`: timestamp-nearest pairing, skew checks and stale-frame drops.
+
+`ground_detection/pickleball_court_detector_handoff.py` 是独立的首帧标定上游工具，
+不是活动运行时模块。它的输出经人工复核后进入正式配置；`src/court` 和
+`src/tracking` 都不得 import 它，也不会在每帧重新检测球场。
 
 The dependency direction is `apps/tools -> factory/core`. Core modules never import an
 application entry point. `apps/track_video.py` and `apps/track_dual_halves.py` are thin
@@ -97,14 +111,31 @@ apps/track_dual_halves.py
        -> src/tracking/factory.py                 shared model/pipeline assembly
        -> left/right BallTrackingPipeline         independent local state
        -> CrossHalfBallCoordinator                one global ball
+       -> src/court/FixedCourtProjector           read-only selected-ball projection
+       -> src/court/CourtEventInterpreter         read-only candidate event state
+       -> src/court/CourtPanelRenderer            blank framework output
+
+apps/replay_court_projection.py
+    -> saved dual_tracking.mp4 + left/right/global JSONL
+    -> src/tracking/dual_camera/projection_replay.py
+    -> shared src/court assembly                  no model inference
+    -> replacement court panel + derived JSONL
 
 future live entry
     -> src/runtime/capture/                       not implemented
     -> src/runtime/synchronization/               contracts implemented
     -> src/runtime/inference/                     not implemented
     -> src/tracking/                              reuse algorithm core
+    -> global single-ball selection
+    -> shared src/court projection + events       same live frame stream
     -> src/runtime/outputs/                       not implemented
 ```
+
+`projection_replay.py` is strictly a desktop debugging and offline-regression
+optimization. It is not an alternative deployment architecture. The RK3588S
+runtime must consume live paired frames and execute detection, tracking, global
+selection, per-camera fixed-calibration projection and event interpretation in
+one online flow. Production must not depend on pre-generated MP4 or JSONL.
 
 ## Dual-camera offline path and robot target
 
@@ -114,6 +145,12 @@ The dual-camera path keeps independent pixel coordinate systems:
 left camera  -> local pipeline --+
                                  +-> global single-ball coordinator -> global JSONL
 right camera -> local pipeline --+
+                                                                    |
+                                                                    v
+                                                       fixed per-side court projector
+                                                                    |
+                                                                    v
+                                               court JSON fields + blank court panel
 ```
 
 A net-bound trajectory activates a short receiving-side entry band. The receiver
@@ -123,7 +160,10 @@ fast-track prediction ROI. Revision 9 gives a confirmed YOLO/ONNX observation pr
 over a prediction or missing output on the other side. Handoff arming, entry-ROI
 membership and consecutive confirmation remain mandatory for auxiliary fast-motion
 candidates, so motion evidence cannot impersonate a primary detector observation.
-No uncalibrated coordinate mapping between cameras is performed. In strict mode, a
+Local pixel coordinates are never directly compared between cameras. When fixed-camera
+calibration is enabled, each side independently maps only the already selected global
+ball into the shared ground-plane court coordinate system; the projection has no feedback
+path into either local pipeline or the coordinator. In strict mode, a
 source-side prediction that passes its configured net-facing image edge is retained
 only inside the local tracker; it is suppressed from global output and rendering.
 A confirmed side switch clears both rendering trails so points from different camera
@@ -140,6 +180,11 @@ The current `dual_camera/runner.py` is an offline paired-file regression runner.
 It requires matching file metadata, reads the same frame index from both inputs,
 then invokes the shared detector for the left and right pipelines sequentially.
 This preserves offline time alignment but is not the final live-camera runtime.
+Thus the current application-level path is paired and synchronized but serial:
+left read, right read, left pipeline, right pipeline, coordinator, court projection,
+render and write. OpenCV or CUDA libraries may use internal worker threads, but the
+Python runner does not run the two camera pipelines in a thread pool or separate
+processes.
 For the maintained pre-cropped offline inputs it derives a shared physical scale
 from the sum of the left and right image widths. Explicit per-camera overrides
 remain available for independently calibrated real cameras.

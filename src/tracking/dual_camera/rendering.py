@@ -26,8 +26,10 @@ def make_header(
     width: int,
     left_width: int,
     selection: GlobalBallSelection,
+    court_panel_width: int = 0,
 ) -> np.ndarray:
     header = np.zeros((HEADER_HEIGHT, width, 3), dtype=np.uint8)
+    tracking_width = max(left_width, width - max(0, int(court_panel_width)))
     global_text = (
         f"GLOBAL BALL ID {selection.global_track_id}: "
         f"{selection.state.upper()}"
@@ -58,7 +60,15 @@ def make_header(
             cv2.LINE_AA,
         )
 
-    put_centered(global_text, 0, width, 30, 0.72)
+    put_centered(global_text, 0, tracking_width, 30, 0.72)
     put_centered("LEFT HALF", 0, left_width, 67, 0.78)
-    put_centered("RIGHT HALF", left_width, width, 67, 0.78)
+    put_centered("RIGHT HALF", left_width, tracking_width, 67, 0.78)
+    if court_panel_width > 0:
+        put_centered(
+            "COURT PROJECTION",
+            tracking_width,
+            width,
+            51,
+            0.58,
+        )
     return header
