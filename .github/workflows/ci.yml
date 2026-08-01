@@ -9,14 +9,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install core test dependency
-        run: python -m pip install "numpy>=1.24,<3"
+
+      - name: Install core test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            "numpy>=1.24,<3" \
+            "opencv-python-headless>=4.8,<5" \
+            "pillow>=10,<13" \
+            "pyyaml>=6,<7"
+
       - name: Compile
         run: python -m compileall -q src apps tools tests
+
       - name: Check project references
         run: python tools/check_project_refs.py
+
       - name: Test
         run: python -m unittest discover -s tests -v
