@@ -117,6 +117,13 @@ Last updated: 2026-07-31
 
 ### Changed
 
+- Added a guarded R9 candidate fix for the frame 811-825 stale tentative-track
+  false recovery. An unconfirmed track that has crossed a missing frame now
+  reseeds its motion evidence and Kalman velocity at the next matched point;
+  across-gap displacement cannot by itself confirm motion. The exact accepted
+  detections from source frames 808-825 are retained as a fixed regression
+  fixture. This does not alter established-track prediction, impact recovery,
+  bounce recovery or primary-observation continuity correction.
 - Promoted `pickleball_tracking` revision 9 after full `test`/`test_2`
   diagnostic replay. A confirmed same-camera YOLO/ONNX observation now
   immediately replaces an old predicted local ID; this does not count as a
@@ -233,7 +240,7 @@ Last updated: 2026-07-31
 
 ### Validation
 
-- 130 unit tests pass, including dual-camera coordination, paired-crop scale,
+- 131 unit tests pass, including dual-camera coordination, paired-crop scale,
   same-side primary-observation preemption, bounce recovery and filter-lag
   correction,
   derivation, trail discontinuity handling, runtime synchronization,

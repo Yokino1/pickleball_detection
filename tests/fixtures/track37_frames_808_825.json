@@ -1,0 +1,161 @@
+[
+  {
+    "frame_index": 808,
+    "timestamp": 16.16,
+    "detections": [
+      {
+        "bbox": [725.2855224609375, 1016.718505859375, 765.4552001953125, 1050.114501953125],
+        "center": [745.370361328125, 1033.41650390625],
+        "confidence": 0.35879921913146973,
+        "source": "yolo"
+      },
+      {
+        "bbox": [389.24383544921875, 883.05157470703125, 440.5651550292969, 919.3294067382812],
+        "center": [414.9044952392578, 901.1904907226562],
+        "confidence": 0.13724301755428314,
+        "source": "yolo"
+      }
+    ]
+  },
+  {
+    "frame_index": 809,
+    "timestamp": 16.18,
+    "detections": [
+      {
+        "bbox": [709.5069580078125, 1004.4436645507812, 748.6375122070312, 1031.5386962890625],
+        "center": [729.0722351074219, 1017.9911804199219],
+        "confidence": 0.4748975336551666,
+        "source": "yolo"
+      }
+    ]
+  },
+  {"frame_index": 810, "timestamp": 16.2, "detections": []},
+  {
+    "frame_index": 811,
+    "timestamp": 16.22,
+    "detections": [
+      {
+        "bbox": [514.0, 896.0, 518.0, 910.0],
+        "center": [516.0, 903.0],
+        "confidence": 0.21,
+        "source": "fast_motion"
+      },
+      {
+        "bbox": [550.0, 992.0, 556.0, 998.0],
+        "center": [553.0, 995.0],
+        "confidence": 0.21,
+        "source": "fast_motion"
+      },
+      {
+        "bbox": [534.0, 904.0, 540.0, 910.0],
+        "center": [537.0, 907.0],
+        "confidence": 0.21,
+        "source": "fast_motion"
+      },
+      {
+        "bbox": [588.0, 1038.0, 596.0, 1044.0],
+        "center": [592.0, 1041.0],
+        "confidence": 0.21,
+        "source": "fast_motion"
+      }
+    ]
+  },
+  {"frame_index": 812, "timestamp": 16.24, "detections": []},
+  {"frame_index": 813, "timestamp": 16.26, "detections": []},
+  {"frame_index": 814, "timestamp": 16.28, "detections": []},
+  {"frame_index": 815, "timestamp": 16.3, "detections": []},
+  {"frame_index": 816, "timestamp": 16.32, "detections": []},
+  {"frame_index": 817, "timestamp": 16.34, "detections": []},
+  {
+    "frame_index": 818,
+    "timestamp": 16.36,
+    "detections": [
+      {
+        "bbox": [797.6281127929688, 834.0252685546875, 935.299072265625, 921.555908203125],
+        "center": [866.4635925292969, 877.7905883789062],
+        "confidence": 0.1603986620903015,
+        "source": "yolo"
+      }
+    ]
+  },
+  {
+    "frame_index": 819,
+    "timestamp": 16.38,
+    "detections": [
+      {
+        "bbox": [803.1956176757812, 835.29150390625, 930.388916015625, 917.0711059570312],
+        "center": [866.7922668457031, 876.1813049316406],
+        "confidence": 0.28295132517814636,
+        "source": "yolo"
+      }
+    ]
+  },
+  {"frame_index": 820, "timestamp": 16.4, "detections": []},
+  {
+    "frame_index": 821,
+    "timestamp": 16.42,
+    "detections": [
+      {
+        "bbox": [834.0, 998.0, 840.0, 1006.0],
+        "center": [837.0, 1002.0],
+        "confidence": 0.21,
+        "source": "fast_motion"
+      },
+      {
+        "bbox": [734.0, 958.0, 744.0, 968.0],
+        "center": [739.0, 963.0],
+        "confidence": 0.21,
+        "source": "fast_motion"
+      },
+      {
+        "bbox": [748.0, 968.0, 762.0, 984.0],
+        "center": [755.0, 976.0],
+        "confidence": 0.21,
+        "source": "fast_motion"
+      }
+    ]
+  },
+  {
+    "frame_index": 822,
+    "timestamp": 16.44,
+    "detections": [
+      {
+        "bbox": [832.0, 998.0, 840.0, 1006.0],
+        "center": [836.0, 1002.0],
+        "confidence": 0.21,
+        "source": "fast_motion"
+      },
+      {
+        "bbox": [732.0, 958.0, 742.0, 966.0],
+        "center": [737.0, 962.0],
+        "confidence": 0.21,
+        "source": "fast_motion"
+      }
+    ]
+  },
+  {
+    "frame_index": 823,
+    "timestamp": 16.46,
+    "detections": [
+      {
+        "bbox": [1532.8157958984375, 9.303037643432617, 1681.4365234375, 114.03800964355469],
+        "center": [1607.1261596679688, 61.67052364349365],
+        "confidence": 0.15653756260871887,
+        "source": "yolo"
+      }
+    ]
+  },
+  {"frame_index": 824, "timestamp": 16.48, "detections": []},
+  {
+    "frame_index": 825,
+    "timestamp": 16.5,
+    "detections": [
+      {
+        "bbox": [713.6209106445312, 785.3402709960938, 767.53564453125, 825.2780151367188],
+        "center": [740.5782775878906, 805.3091430664062],
+        "confidence": 0.5318605303764343,
+        "source": "yolo"
+      }
+    ]
+  }
+]

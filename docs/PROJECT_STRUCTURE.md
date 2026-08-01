@@ -162,7 +162,7 @@ outputs/experiments/court_projection_replay/<run_id>/
 | 其他 `test_*tracking*` / `test_ball_pipeline.py` | R9 核心回归 |
 
 交付前统一运行完整 unittest，而不是只运行新增球场测试。当前已验证基线为
-130 项 unittest 通过。
+131 项 unittest 通过。
 
 ## 7. 文档结构与权威关系
 

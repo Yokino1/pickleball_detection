@@ -1,4 +1,6 @@
+import json
 import unittest
+from pathlib import Path
 
 from src.tracking.multi_ball_tracker import MultiBallTracker
 from src.tracking.types import BallDetection
@@ -92,6 +94,53 @@ class MultiBallTrackerTest(unittest.TestCase):
         resumed = tracker.update([detection(120, 100)], 1280, 720)
         self.assertEqual(resumed[0].track_id, 1)
         self.assertEqual(resumed[0].stationary_frames, 0)
+
+    def test_unconfirmed_track_does_not_use_gap_jump_as_motion_evidence(self):
+        tracker = MultiBallTracker(
+            high_conf=0.20,
+            low_conf=0.12,
+            min_hits=2,
+            max_prediction_ms=120,
+            max_missing_ms=350,
+            tentative_gate_px=150,
+            max_speed_px_per_second=3200,
+            reference_frame_width=1280,
+            frame_scale_override=3.0,
+            require_motion_confirmation=True,
+            motion_threshold_px=12,
+            unconfirmed_max_ms=1500,
+            emit_tentative=False,
+            motion_model="constant_acceleration",
+            constant_acceleration_min_observations=4,
+        )
+
+        fixture_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "track37_frames_808_825.json"
+        )
+        records = json.loads(fixture_path.read_text(encoding="utf-8"))
+        outputs_after_false_candidates = []
+        reseed_count = 0
+        for record in records:
+            detections = [
+                BallDetection(**candidate)
+                for candidate in record["detections"]
+            ]
+            outputs = tracker.update(
+                detections,
+                1920,
+                2160,
+                timestamp_s=record["timestamp"],
+            )
+            reseed_count += tracker.diagnostics[
+                "unconfirmed_gap_reseeds"
+            ]
+            if record["frame_index"] >= 811:
+                outputs_after_false_candidates.extend(outputs)
+
+        self.assertEqual(outputs_after_false_candidates, [])
+        self.assertGreaterEqual(reseed_count, 1)
 
     def test_implausible_jump_cannot_move_an_existing_id(self):
         tracker = MultiBallTracker(

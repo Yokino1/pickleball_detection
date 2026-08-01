@@ -329,6 +329,7 @@ class MultiBallTracker:
         self._impact_recoveries = 0
         self._bounce_recoveries = 0
         self._primary_continuity_recoveries = 0
+        self._unconfirmed_gap_reseeds = 0
         self._direction_gate_rejections = 0
         self._nis_gate_rejections = 0
         self._acceleration_gate_rejections = 0
@@ -378,6 +379,7 @@ class MultiBallTracker:
         self._impact_recoveries = 0
         self._bounce_recoveries = 0
         self._primary_continuity_recoveries = 0
+        self._unconfirmed_gap_reseeds = 0
         self._direction_gate_rejections = 0
         self._nis_gate_rejections = 0
         self._acceleration_gate_rejections = 0
@@ -464,6 +466,7 @@ class MultiBallTracker:
             "primary_continuity_recoveries": (
                 self._primary_continuity_recoveries
             ),
+            "unconfirmed_gap_reseeds": self._unconfirmed_gap_reseeds,
             "direction_gate_rejections": self._direction_gate_rejections,
             "nis_gate_rejections": self._nis_gate_rejections,
             "acceleration_gate_rejections": self._acceleration_gate_rejections,
@@ -510,6 +513,7 @@ class MultiBallTracker:
         self._impact_recoveries = 0
         self._bounce_recoveries = 0
         self._primary_continuity_recoveries = 0
+        self._unconfirmed_gap_reseeds = 0
         self._direction_gate_rejections = 0
         self._nis_gate_rejections = 0
         self._acceleration_gate_rejections = 0
@@ -996,14 +1000,48 @@ class MultiBallTracker:
         for track_index, detection_index, recovery_kind in matches:
             track = self._tracks[track_index]
             detection = detections[detection_index]
+            reseed_unconfirmed_gap = (
+                self.require_motion_confirmation
+                and not track.motion_confirmed
+                and track.missing_frames > 0
+            )
             elapsed_s = max(
                 self.default_dt_s,
                 self._tracker_time_s - track.last_observed_time_s,
             )
-            measured_velocity = (
-                (float(detection.center[0]) - track.last_observed_center[0]) / elapsed_s,
-                (float(detection.center[1]) - track.last_observed_center[1]) / elapsed_s,
-            )
+            if reseed_unconfirmed_gap:
+                measured_velocity = (0.0, 0.0)
+                track.kalman.initialize(detection.center)
+                track.kalman.reset_acceleration()
+                track.hits = 0
+                track.stationary_anchor_center = (
+                    float(detection.center[0]),
+                    float(detection.center[1]),
+                )
+                track.stationary_anchor_frames = 0
+                track.stationary_anchor_time_s = self._tracker_time_s
+                track.raw_stationary_anchor_center = (
+                    float(detection.center[0]),
+                    float(detection.center[1]),
+                )
+                track.raw_stationary_anchor_frames = 0
+                track.raw_stationary_anchor_time_s = self._tracker_time_s
+                track.stationary_frames = 0
+                track.stationary_time_s = 0.0
+                self._unconfirmed_gap_reseeds += 1
+            else:
+                measured_velocity = (
+                    (
+                        float(detection.center[0])
+                        - track.last_observed_center[0]
+                    )
+                    / elapsed_s,
+                    (
+                        float(detection.center[1])
+                        - track.last_observed_center[1]
+                    )
+                    / elapsed_s,
+                )
             anchor_displacement = float(
                 np.hypot(
                     detection.center[0] - track.stationary_anchor_center[0],
@@ -1062,8 +1100,9 @@ class MultiBallTracker:
                 float(detection.center[0]),
                 float(detection.center[1]),
             )
-            track.kalman.update(detection.center)
-            if recovery_kind is not None:
+            if not reseed_unconfirmed_gap:
+                track.kalman.update(detection.center)
+            if recovery_kind is not None and not reseed_unconfirmed_gap:
                 track.kalman.set_velocity(*measured_velocity)
                 track.kalman.reset_acceleration()
                 if (
