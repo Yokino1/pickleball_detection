@@ -10,6 +10,10 @@ D:\anacondaa\envs\torch-cu128\python.exe apps\track_dual_halves.py --config conf
 
 运行命令应直接粘贴到 Conda CMD，不为每次运行生成 `.cmd` 文件。
 
+需要验证纯检测追踪输出而不拼接右侧球场投影面板时，可加
+`--no-court-projection`。该开关只修改本次进程内的配置副本，不改写
+`configs/tracking.yaml`，也不改变 R9、协调器或 JSONL 数据契约。
+
 双摄入口负责参数和运行策略；同步处理、全局单球协调、handoff、渲染和产物校验
 位于 `src/tracking/dual_camera/`。默认拒绝覆盖同名结果，每次完成后生成 manifest。
 

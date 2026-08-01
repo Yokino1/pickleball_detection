@@ -69,6 +69,11 @@ def parse_args() -> argparse.Namespace:
         "--run-note",
         help="Short experiment purpose recorded in the run manifest",
     )
+    parser.add_argument(
+        "--no-court-projection",
+        action="store_true",
+        help="Disable the read-only court projection and its output panel",
+    )
     return parser.parse_args()
 
 
@@ -81,6 +86,11 @@ def main() -> int:
 
     config_path = project_path(args.config)
     config = copy.deepcopy(load_config(config_path))
+    if args.no_court_projection:
+        config.setdefault("runtime", {}).setdefault(
+            "court_projection",
+            {},
+        )["enabled"] = False
     person_config = config.setdefault("runtime", {}).setdefault(
         "person_detection",
         {},
