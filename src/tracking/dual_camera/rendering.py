@@ -9,7 +9,6 @@ import numpy as np
 
 from .coordinator import GlobalBallSelection
 
-
 HEADER_HEIGHT = 82
 
 
@@ -20,6 +19,15 @@ def display_result(result, selected_track):
         ball_tracks=tracks,
         ball_track=selected_track,
     )
+
+
+def court_motion_discontinuity_reason(
+    trail_reset_reason: str | None,
+) -> str | None:
+    """Map display reset reasons to physical court-motion discontinuities."""
+    if trail_reset_reason in {"local_track_change", "physical_discontinuity"}:
+        return trail_reset_reason
+    return None
 
 
 def make_header(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from ...court import (
     ProjectionResult,
     build_court_projection,
 )
+from ...referee import REFEREE_CONTRACT_VERSION, build_referee_engine
 from ..factory import PROJECT_ROOT, build_pipeline
 from ..overlay import TrackingOverlay
 from ..run_manifest import (
@@ -23,7 +25,14 @@ from ..run_manifest import (
 from ..types import CourtInfo
 from .artifacts import DualRunArtifacts, validate_written_outputs
 from .coordinator import CrossCameraHandoffAdvisor, CrossHalfBallCoordinator
-from .rendering import HEADER_HEIGHT, display_result, make_header
+from .rendering import (
+    HEADER_HEIGHT,
+    display_result,
+    make_header,
+)
+from .rendering import (
+    court_motion_discontinuity_reason as _court_motion_discontinuity_reason,
+)
 
 
 def run_pair(
@@ -81,6 +90,10 @@ def run_pair(
             "right": (right_width, right_height),
         },
     )
+    referee_engine = build_referee_engine(
+        config,
+        court_projector.layout if court_projector is not None else None,
+    )
     court_panel_width = (
         court_renderer.panel_width(left_height)
         if court_renderer is not None
@@ -113,6 +126,22 @@ def run_pair(
             "frame_scale_overrides": frame_scale_overrides,
             "header_height": HEADER_HEIGHT,
             "court_projection_enabled": court_projector is not None,
+            "referee_enabled": referee_engine is not None,
+            "referee_contract_version": (
+                REFEREE_CONTRACT_VERSION
+                if referee_engine is not None
+                else None
+            ),
+            "referee_scoring_mode": (
+                referee_engine.score_recorder.scoring_mode
+                if referee_engine is not None
+                else None
+            ),
+            "referee_service_ownership_enabled": (
+                referee_engine.service_ownership_enabled
+                if referee_engine is not None
+                else None
+            ),
             "court_panel_width": court_panel_width,
             "run_note": run_note,
         },
@@ -216,6 +245,10 @@ def run_pair(
             partial.left_jsonl.open("w", encoding="utf-8") as left_handle,
             partial.right_jsonl.open("w", encoding="utf-8") as right_handle,
             partial.global_jsonl.open("w", encoding="utf-8") as global_handle,
+            partial.rally_results_jsonl.open(
+                "w",
+                encoding="utf-8",
+            ) as rally_results_handle,
         ):
             while max_frames is None or processed < max_frames:
                 left_ok, left_frame = left_capture.read()
@@ -297,6 +330,10 @@ def run_pair(
                         0.0,
                     ),
                     frame_scale_overrides=frame_scale_overrides,
+                    max_observation_gap_s=max(1e-6, 1.5 / left_fps),
+                )
+                court_discontinuity_reason = _court_motion_discontinuity_reason(
+                    trail_reset_reason
                 )
                 if trail_reset_reason is not None:
                     trail_reset_frames += 1
@@ -312,15 +349,26 @@ def run_pair(
                         and trail_reset_reason != "camera_side_switch"
                     ):
                         court_renderer.reset()
+                active_result = None
+                if selection.active_side == "left":
+                    active_result = left_result
+                elif selection.active_side == "right":
+                    active_result = right_result
+                eligible_players = (
+                    active_result.players if active_result is not None else []
+                )
+                eligible_player_centers_court_xy = (
+                    court_projector.project_eligible_player_box_centers(
+                        selection.active_side,
+                        eligible_players,
+                    )
+                    if court_projector is not None
+                    else []
+                )
                 if (
                     court_event_interpreter is not None
                     and court_projection is not None
                 ):
-                    active_result = (
-                        left_result
-                        if selection.active_side == "left"
-                        else right_result
-                    )
                     court_projection.event = court_event_interpreter.update(
                         court_projection,
                         track=selection.track,
@@ -331,11 +379,39 @@ def run_pair(
                             "right": right_result.diagnostics.get("tracker", {}),
                         },
                         frame_scale_overrides=frame_scale_overrides,
-                        discontinuity_reason=trail_reset_reason,
+                        discontinuity_reason=court_discontinuity_reason,
                         timestamp_s=timestamp_s,
                         frame_index=processed,
-                        eligible_players=active_result.players,
+                        eligible_players=eligible_players,
                     ).to_dict()
+                referee_result = (
+                    referee_engine.update(
+                        court_projection,
+                        timestamp_s=timestamp_s,
+                        frame_index=processed,
+                        discontinuity_reason=court_discontinuity_reason,
+                        eligible_player_centers_court_xy=(
+                            eligible_player_centers_court_xy
+                        ),
+                    )
+                    if referee_engine is not None
+                    and court_projection is not None
+                    else None
+                )
+                referee_record = (
+                    referee_result.to_dict()
+                    if referee_result is not None
+                    else None
+                )
+                rally_result = (
+                    referee_record.get("rally_result")
+                    if referee_record is not None
+                    else None
+                )
+                if rally_result is not None:
+                    rally_results_handle.write(
+                        json.dumps(rally_result, ensure_ascii=False) + "\n"
+                    )
                 if handoff_advisor is not None:
                     handoff_advisor.update(
                         selection,
@@ -395,6 +471,7 @@ def run_pair(
                             right_result,
                             trail_reset_reason=trail_reset_reason,
                             court_projection=court_projection,
+                            referee=referee_record,
                         ),
                         ensure_ascii=False,
                     )
@@ -438,6 +515,7 @@ def run_pair(
                         court_renderer.render(
                             left_rendered.shape[0],
                             court_projection,
+                            referee=referee_record,
                         )
                     )
                 combined = cv2.hconcat(rendered_parts)
@@ -536,6 +614,11 @@ def run_pair(
                     second_bounce_candidate_frames
                 ),
                 "paddle_hit_candidate_frames": paddle_hit_candidate_frames,
+                "referee": (
+                    referee_engine.diagnostics()
+                    if referee_engine is not None
+                    else {"enabled": False}
+                ),
             },
         )
         write_manifest(partial.manifest, manifest)
@@ -552,6 +635,7 @@ def run_pair(
     print(f"[jsonl] {artifacts.left_jsonl}")
     print(f"[jsonl] {artifacts.right_jsonl}")
     print(f"[jsonl] {artifacts.global_jsonl}")
+    print(f"[jsonl] {artifacts.rally_results_jsonl}")
     print(f"[manifest] {artifacts.manifest}")
     return processed
 
@@ -619,16 +703,27 @@ def _attach_court_info(
 
 
 def _read_and_validate_metadata(left_capture, right_capture) -> dict:
-    def read(capture) -> dict:
+    def read(capture, side: str) -> dict:
+        raw = {
+            "fps": float(capture.get(cv2.CAP_PROP_FPS)),
+            "frames": float(capture.get(cv2.CAP_PROP_FRAME_COUNT)),
+            "width": float(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "height": float(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        }
+        for name, value in raw.items():
+            valid_range = value > 0.0 if name == "fps" else value >= 1.0
+            if not math.isfinite(value) or not valid_range:
+                label = "FPS" if name == "fps" else f"video {name}"
+                raise ValueError(f"Invalid {side} {label}: {value}")
         return {
-            "fps": float(capture.get(cv2.CAP_PROP_FPS)) or 30.0,
-            "frames": int(capture.get(cv2.CAP_PROP_FRAME_COUNT)),
-            "width": int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
-            "height": int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            "fps": raw["fps"],
+            "frames": int(raw["frames"]),
+            "width": int(raw["width"]),
+            "height": int(raw["height"]),
         }
 
-    left = read(left_capture)
-    right = read(right_capture)
+    left = read(left_capture, "left")
+    right = read(right_capture, "right")
     if abs(left["fps"] - right["fps"]) > 1e-3:
         raise ValueError(f"FPS mismatch: left={left['fps']}, right={right['fps']}")
     if left["frames"] != right["frames"]:
@@ -741,6 +836,7 @@ def _trail_reset_reason(
     ],
     max_speed_px_per_second: float,
     frame_scale_overrides: dict[str, float],
+    max_observation_gap_s: float | None = None,
 ) -> str | None:
     track = selection.track
     side = selection.active_side
@@ -755,6 +851,12 @@ def _trail_reset_reason(
     if previous_track_id != selection.local_track_id:
         return "local_track_change"
     elapsed_s = float(timestamp_s) - previous_timestamp_s
+    if (
+        max_observation_gap_s is not None
+        and max_observation_gap_s > 0.0
+        and elapsed_s > max_observation_gap_s
+    ):
+        return "observation_gap"
     if elapsed_s <= 0.0 or max_speed_px_per_second <= 0.0:
         return None
     distance = float(
@@ -778,8 +880,6 @@ def _remember_rendered_track(
         tuple[int | None, tuple[float, float], float] | None,
     ],
 ) -> None:
-    for side in ("left", "right"):
-        previous_rendered_tracks[side] = None
     track = selection.track
     side = selection.active_side
     if track is None or side not in ("left", "right") or track.center is None:
@@ -859,6 +959,7 @@ def _global_frame_record(
     *,
     trail_reset_reason: str | None = None,
     court_projection: ProjectionResult | None = None,
+    referee: dict | None = None,
 ) -> dict:
     def side_record(result) -> dict:
         return {
@@ -880,6 +981,7 @@ def _global_frame_record(
             if court_projection is not None
             else None
         ),
+        "referee": referee,
         "coordinator": coordinator.diagnostics(),
         "handoff": (
             handoff_advisor.diagnostics(timestamp_s)
@@ -905,6 +1007,7 @@ def _manifest_outputs(
         "left_jsonl",
         "right_jsonl",
         "global_jsonl",
+        "rally_results_jsonl",
     ):
         final_path = getattr(final, name)
         partial_path = getattr(partial, name)

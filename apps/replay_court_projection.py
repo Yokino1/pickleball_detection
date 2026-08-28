@@ -58,7 +58,10 @@ def main() -> int:
     args = parse_args()
     config_path = project_path(args.config)
     config = load_config(config_path)
-    source = load_projection_replay_source(project_path(args.source_run))
+    source = load_projection_replay_source(
+        project_path(args.source_run),
+        require_rendered_video=not args.projection_only,
+    )
     replay_court_projection(
         source,
         output_dir=project_path(args.output_dir),

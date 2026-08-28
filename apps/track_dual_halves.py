@@ -7,7 +7,6 @@ import copy
 import sys
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -99,8 +98,27 @@ def main() -> int:
         args.max_players_per_half
     )
     config.setdefault("tracker", {})["max_output_tracks"] = 0
+    config["run_context"] = {
+        "entrypoint": "apps/track_dual_halves.py",
+        "effective_overrides": {
+            "runtime.court_projection.enabled": bool(
+                config.get("runtime", {})
+                .get("court_projection", {})
+                .get("enabled", False)
+            ),
+            "runtime.person_detection.player_selection.max_players": (
+                args.max_players_per_half
+            ),
+            "tracker.max_output_tracks": 0,
+        },
+    }
 
     print(f"[players] max eligible players per half={args.max_players_per_half}")
+    runtime_config = config.get("runtime", {})
+    referee_output_enabled = bool(
+        runtime_config.get("court_projection", {}).get("enabled", False)
+        and runtime_config.get("referee", {}).get("enabled", False)
+    )
     detector = build_detector(config)
     person_detector = build_person_detector(config)
     output_dir = project_path(args.output_dir)
@@ -108,11 +126,15 @@ def main() -> int:
     for run_id, left_value, right_value in args.pair:
         artifacts = DualRunArtifacts.for_run(output_dir, run_id)
         existing = [
-            path for path in artifacts.final_files() if path.exists()
+            path for path in artifacts.all_files() if path.exists()
         ]
-        if args.skip_existing and len(existing) == len(
-            artifacts.final_files()
-        ):
+        required = artifacts.required_files(
+            referee_enabled=referee_output_enabled,
+        )
+        stable_complete = all(
+            path.exists() for path in required
+        )
+        if args.skip_existing and stable_complete:
             print(f"[skip:{run_id}] all final artifacts already exist")
             continue
         if existing and not args.overwrite:

@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 MANIFEST_SCHEMA_VERSION = 1
 
 
@@ -23,6 +22,17 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sha256_json(value: Any) -> str:
+    """Hash one JSON-compatible value using a stable canonical encoding."""
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def collect_git_state(project_root: Path) -> dict[str, Any]:
@@ -66,7 +76,12 @@ def create_manifest(
     inputs: list[dict],
     parameters: dict,
 ) -> dict:
-    profile = config.get("profile", {})
+    # Keep the source-file identity for backwards compatibility, but also
+    # capture the actual in-memory configuration. CLI entry points may apply
+    # run-local overrides after loading YAML, so the file hash alone is not a
+    # reproducible description of the run.
+    effective_config = json.loads(json.dumps(config, ensure_ascii=False))
+    profile = dict(effective_config.get("profile", {}))
     return {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "run_id": run_id,
@@ -79,6 +94,8 @@ def create_manifest(
             "path": str(config_path.resolve()),
             "sha256": sha256_file(config_path),
             "profile": profile,
+            "effective_sha256": sha256_json(effective_config),
+            "effective": effective_config,
         },
         "inputs": inputs,
         "parameters": parameters,
