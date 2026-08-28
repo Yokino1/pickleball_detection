@@ -45,20 +45,33 @@ def _invalid_calibration(
     warnings: list[str],
     source_keypoint_count: int = 0,
 ) -> CameraCalibration:
-    size = values.get("image_size", [0, 0])
+    size = _configured_image_size(values) or (0, 0)
     return CameraCalibration(
         side=side,
         calibration_id=values.get("calibration_id"),
         calibration_source=str(
             values.get("source", "manual_rough_fixed_view")
         ),
-        image_size=(int(size[0]), int(size[1])),
+        image_size=size,
         homography_image_to_court=None,
         reprojection_error_px=None,
         source_keypoint_count=source_keypoint_count,
         valid=False,
         warnings=warnings,
     )
+
+
+def _configured_image_size(values: dict) -> tuple[int, int] | None:
+    raw_size = values.get("image_size")
+    if not isinstance(raw_size, (list, tuple)) or len(raw_size) != 2:
+        return None
+    try:
+        size = (int(raw_size[0]), int(raw_size[1]))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if size[0] < 1 or size[1] < 1:
+        return None
+    return size
 
 
 def _load_camera_calibration(
@@ -71,8 +84,8 @@ def _load_camera_calibration(
         "ground_plane_homography_only",
         "airborne_ball_is_line_of_sight_ground_plane_approximation",
     ]
-    configured_size = tuple(int(value) for value in values.get("image_size", []))
-    if len(configured_size) != 2:
+    configured_size = _configured_image_size(values)
+    if configured_size is None:
         return _invalid_calibration(
             side,
             values,

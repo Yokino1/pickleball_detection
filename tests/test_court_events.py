@@ -14,6 +14,7 @@ def projection(
     inside=True,
     image_xy=(100.0, 100.0),
     track_status="observed",
+    court_y=12.0,
 ):
     return ProjectionResult(
         coordinate_system="pickleball_full_court_ft",
@@ -22,7 +23,7 @@ def projection(
         calibration_id="left_test",
         calibration_source="manual_test",
         image_xy=[float(image_xy[0]), float(image_xy[1])],
-        ball_court_xy=[10.0, 12.0] if inside else [-1.0, 12.0],
+        ball_court_xy=[10.0, float(court_y)] if inside else [-1.0, float(court_y)],
         projection_status="homography",
         projection_valid=True,
         homography_available=True,
@@ -216,6 +217,55 @@ class CourtEventInterpreterTest(unittest.TestCase):
         self.assertNotIn("second_bounce_candidate", later.events)
         self.assertIn("rally_state_reset_after_timeout", later.warnings)
 
+    def test_unavailable_timeout_clears_latched_ground_state(self):
+        interpreter = CourtEventInterpreter(
+            rally_state_timeout_ms=5000.0,
+            event_cooldown_ms=0.0,
+        )
+        projected = projection(inside=True)
+        self.update(
+            interpreter,
+            projected,
+            bounce=1,
+            timestamp_s=0.0,
+        )
+        unavailable = ProjectionResult(
+            coordinate_system="pickleball_full_court_ft",
+            coordinate_system_version=1,
+            active_side=None,
+            calibration_id=None,
+            calibration_source=None,
+            image_xy=None,
+            ball_court_xy=None,
+            projection_status="none",
+            projection_valid=False,
+            homography_available=True,
+            reprojection_error_px=None,
+        )
+
+        missing = interpreter.update(
+            unavailable,
+            track=None,
+            active_side=None,
+            local_track_id=None,
+            tracker_diagnostics=diagnostics(bounce=1),
+            frame_scale_overrides={"left": 1.0, "right": 1.0},
+            timestamp_s=6.0,
+        )
+        resumed = self.update(
+            interpreter,
+            projected,
+            bounce=1,
+            timestamp_s=6.02,
+        )
+
+        self.assertIn(
+            "event_state_reset_after_unavailable_timeout",
+            missing.warnings,
+        )
+        self.assertEqual(resumed.phase, "airborne")
+        self.assertEqual(resumed.bounce_index_since_last_hit, 0)
+
     def test_out_of_bounds_takes_precedence_over_second_bounce(self):
         interpreter = CourtEventInterpreter(event_cooldown_ms=0.0)
 
@@ -301,7 +351,12 @@ class CourtEventInterpreterTest(unittest.TestCase):
         self.assertEqual(results[-1].events, ["bounce_candidate"])
         self.assertEqual(results[-1].display_color, "yellow")
         self.assertEqual(results[-1].contact_frame_index, 1)
+        self.assertAlmostEqual(results[-1].contact_timestamp_s, 0.02)
         self.assertEqual(results[-1].contact_image_xy, [100.0, 120.0])
+        self.assertAlmostEqual(
+            results[-1].to_dict()["contact_timestamp_s"],
+            0.02,
+        )
         self.assertIn(
             "vertical_down_to_up_reversal",
             results[-1].evidence,
@@ -511,7 +566,7 @@ class CourtEventInterpreterTest(unittest.TestCase):
             suppressed.warnings,
         )
 
-    def test_bounce_count_resets_when_ball_changes_court_half(self):
+    def test_camera_switch_does_not_reset_physical_half_bounce_count(self):
         interpreter = CourtEventInterpreter()
         projected = projection(inside=True)
         first = self.update(
@@ -537,6 +592,25 @@ class CourtEventInterpreterTest(unittest.TestCase):
             },
             frame_scale_overrides={"left": 1.0, "right": 1.0},
             discontinuity_reason="camera_side_switch",
+            timestamp_s=0.2,
+        )
+
+        self.assertEqual(first.bounce_index_since_last_hit, 1)
+        self.assertEqual(other_half.bounce_index_since_last_hit, 2)
+        self.assertIn("second_bounce_candidate", other_half.events)
+
+    def test_bounce_count_resets_when_contact_changes_physical_half(self):
+        interpreter = CourtEventInterpreter(event_cooldown_ms=0.0)
+        first = self.update(
+            interpreter,
+            projection(court_y=12.0),
+            bounce=1,
+            timestamp_s=0.0,
+        )
+        other_half = self.update(
+            interpreter,
+            projection(court_y=30.0),
+            bounce=2,
             timestamp_s=0.2,
         )
 

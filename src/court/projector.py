@@ -71,6 +71,68 @@ class FixedCourtProjector:
     def calibration_for(self, side: str) -> CameraCalibration | None:
         return self.calibrations.get(side)
 
+    def project_image_point(
+        self,
+        side: str | None,
+        image_xy,
+    ) -> tuple[float, float] | None:
+        """Project one finite image point with the selected fixed homography."""
+        calibration = self.calibrations.get(side) if side is not None else None
+        if calibration is None or not calibration.homography_available:
+            return None
+        if not isinstance(image_xy, (list, tuple)) or len(image_xy) < 2:
+            return None
+        try:
+            x_value = float(image_xy[0])
+            y_value = float(image_xy[1])
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not isfinite(x_value) or not isfinite(y_value):
+            return None
+        homography = calibration.homography_image_to_court
+        assert homography is not None
+        projected = homography @ np.asarray(
+            [x_value, y_value, 1.0],
+            dtype=np.float64,
+        )
+        denominator = float(projected[2])
+        if not isfinite(denominator) or abs(denominator) < 1e-10:
+            return None
+        court_xy = (
+            float(projected[0] / denominator),
+            float(projected[1] / denominator),
+        )
+        if not all(isfinite(value) for value in court_xy):
+            return None
+        return court_xy
+
+    def project_eligible_player_box_centers(
+        self,
+        side: str | None,
+        players,
+    ) -> list[tuple[float, float]]:
+        """Project eligible-player bounding-box centers for serve evidence."""
+        projected_centers: list[tuple[float, float]] = []
+        for player in players or ():
+            if not isinstance(player, dict):
+                continue
+            if not bool(player.get("eligible_player", False)):
+                continue
+            bbox = player.get("bbox")
+            if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+                continue
+            try:
+                center = (
+                    (float(bbox[0]) + float(bbox[2])) / 2.0,
+                    (float(bbox[1]) + float(bbox[3])) / 2.0,
+                )
+            except (TypeError, ValueError, OverflowError):
+                continue
+            court_xy = self.project_image_point(side, center)
+            if court_xy is not None:
+                projected_centers.append(court_xy)
+        return projected_centers
+
     def project_track(self, side: str | None, track) -> ProjectionResult:
         calibration = self.calibrations.get(side) if side is not None else None
         warnings = list(calibration.warnings) if calibration is not None else []

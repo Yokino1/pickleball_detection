@@ -31,6 +31,10 @@ class ChineseStatusBanner:
             tuple[int, str, tuple[int, int, int]],
             np.ndarray,
         ] = {}
+        self._inline_cache: dict[
+            tuple[str, int, tuple[int, int, int]],
+            np.ndarray,
+        ] = {}
 
     @property
     def chinese_available(self) -> bool:
@@ -91,7 +95,6 @@ class ChineseStatusBanner:
         if self.font_path is None:
             self._draw_fallback(banner, fallback_text, color_bgr)
             return banner
-
         try:
             from PIL import Image, ImageDraw, ImageFont
 
@@ -118,6 +121,106 @@ class ChineseStatusBanner:
         except (ImportError, OSError, ValueError):
             self._draw_fallback(banner, fallback_text, color_bgr)
             return banner
+
+    def draw_text(
+        self,
+        panel: np.ndarray,
+        *,
+        text_zh: str,
+        fallback_text: str,
+        origin: tuple[int, int],
+        color_bgr: tuple[int, int, int],
+        font_size: int,
+    ) -> None:
+        """Draw cached inline CJK text with an ASCII OpenCV fallback."""
+        x, y = (int(origin[0]), int(origin[1]))
+        size = max(20, int(font_size))
+        if self.font_path is None:
+            self._draw_inline_fallback(
+                panel,
+                fallback_text,
+                origin=(x, y),
+                color_bgr=color_bgr,
+                font_size=size,
+            )
+            return
+
+        cache_key = (str(text_zh), size, color_bgr)
+        overlay = self._inline_cache.get(cache_key)
+        if overlay is None:
+            try:
+                from PIL import Image, ImageDraw, ImageFont
+
+                font = ImageFont.truetype(str(self.font_path), size)
+                probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(probe)
+                bounds = draw.textbbox((0, 0), str(text_zh), font=font)
+                width = max(1, bounds[2] - bounds[0] + 6)
+                height = max(1, bounds[3] - bounds[1] + 6)
+                image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(image)
+                color_rgba = (
+                    int(color_bgr[2]),
+                    int(color_bgr[1]),
+                    int(color_bgr[0]),
+                    255,
+                )
+                draw.text(
+                    (3 - bounds[0], 3 - bounds[1]),
+                    str(text_zh),
+                    font=font,
+                    fill=color_rgba,
+                )
+                overlay = cv2.cvtColor(
+                    np.asarray(image),
+                    cv2.COLOR_RGBA2BGRA,
+                )
+                self._inline_cache[cache_key] = overlay
+            except (ImportError, OSError, ValueError):
+                self._draw_inline_fallback(
+                    panel,
+                    fallback_text,
+                    origin=(x, y),
+                    color_bgr=color_bgr,
+                    font_size=size,
+                )
+                return
+
+        height, width = overlay.shape[:2]
+        if x >= panel.shape[1] or y >= panel.shape[0]:
+            return
+        x_end = min(panel.shape[1], x + width)
+        y_end = min(panel.shape[0], y + height)
+        if x_end <= x or y_end <= y:
+            return
+        visible = overlay[: y_end - y, : x_end - x]
+        alpha = visible[:, :, 3:4].astype(np.float32) / 255.0
+        target = panel[y:y_end, x:x_end].astype(np.float32)
+        blended = visible[:, :, :3].astype(np.float32) * alpha + target * (
+            1.0 - alpha
+        )
+        panel[y:y_end, x:x_end] = blended.astype(np.uint8)
+
+    @staticmethod
+    def _draw_inline_fallback(
+        panel: np.ndarray,
+        text: str,
+        *,
+        origin: tuple[int, int],
+        color_bgr: tuple[int, int, int],
+        font_size: int,
+    ) -> None:
+        x, y = origin
+        cv2.putText(
+            panel,
+            text,
+            (x, y + font_size),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            max(0.55, font_size / 38.0),
+            color_bgr,
+            max(2, font_size // 18),
+            cv2.LINE_AA,
+        )
 
     @staticmethod
     def _draw_fallback(

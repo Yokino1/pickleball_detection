@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from math import acos, degrees, hypot
+from math import acos, degrees, hypot, isfinite
 from typing import Any
 
 from .projector import ProjectionResult
@@ -26,6 +26,7 @@ class CourtEventResult:
     evidence: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     contact_frame_index: int | None = None
+    contact_timestamp_s: float | None = None
     contact_image_xy: list[float] | None = None
     contact_court_xy: list[float] | None = None
     contact_inside_court: bool | None = None
@@ -45,6 +46,7 @@ class CourtEventResult:
             "evidence": list(self.evidence),
             "warnings": list(self.warnings),
             "contact_frame_index": self.contact_frame_index,
+            "contact_timestamp_s": self.contact_timestamp_s,
             "contact_image_xy": (
                 list(self.contact_image_xy)
                 if self.contact_image_xy is not None
@@ -128,6 +130,8 @@ class CourtEventInterpreter:
         player_contact_margin_ratio: float = 0.20,
         player_reach_margin_ratio: float = 0.35,
         player_foot_band_ratio: float = 0.18,
+        net_y_ft: float = 22.0,
+        net_deadband_ft: float = 0.75,
     ):
         self.enabled = bool(enabled)
         self.hit_flash_frames = max(1, int(hit_flash_frames))
@@ -190,6 +194,8 @@ class CourtEventInterpreter:
             0.5,
             max(0.0, float(player_foot_band_ratio)),
         )
+        self.net_y_ft = float(net_y_ft)
+        self.net_deadband_ft = max(0.0, float(net_deadband_ft))
         self._previous_counters = {
             side: {"bounce_recoveries": 0, "impact_recoveries": 0}
             for side in ("left", "right")
@@ -202,20 +208,22 @@ class CourtEventInterpreter:
         self._rising_frames = 0
         self._hit_frames_remaining = 0
         self._bounce_index_since_last_hit = 0
-        self._last_bounce_side: str | None = None
+        self._last_bounce_half: str | None = None
         self._last_bounce_time_s = float("-inf")
         self._last_event_time_s = float("-inf")
         self._last_hit_time_s = float("-inf")
+        self._last_available_time_s = float("-inf")
 
     def reset(self) -> None:
         self._track_identity = None
         self._motion_history.clear()
         self._clear_latched_state()
         self._bounce_index_since_last_hit = 0
-        self._last_bounce_side = None
+        self._last_bounce_half = None
         self._last_bounce_time_s = float("-inf")
         self._last_event_time_s = float("-inf")
         self._last_hit_time_s = float("-inf")
+        self._last_available_time_s = float("-inf")
 
     def update(
         self,
@@ -256,6 +264,17 @@ class CourtEventInterpreter:
             or track is None
             or not projection.projection_valid
         ):
+            if (
+                isfinite(self._last_available_time_s)
+                and self.rally_state_timeout_s > 0.0
+                and now_s - self._last_available_time_s
+                > self.rally_state_timeout_s
+            ):
+                self.reset()
+                result.bounce_index_since_last_hit = 0
+                result.warnings.append(
+                    "event_state_reset_after_unavailable_timeout"
+                )
             result.phase = "unknown"
             result.display_color = "fluorescent_green"
             result.warnings.append("event_input_unavailable")
@@ -267,6 +286,7 @@ class CourtEventInterpreter:
                 result.display_text_zh = "投影不可用"
             return result
 
+        self._last_available_time_s = now_s
         previous_identity = self._track_identity
         previous_motion_history = tuple(self._motion_history)
         identity = (active_side, local_track_id)
@@ -282,9 +302,10 @@ class CourtEventInterpreter:
         if reset_for_discontinuity or identity_changed:
             self._motion_history.clear()
             self._clear_latched_state()
-            self._bounce_index_since_last_hit = 0
-            self._last_bounce_side = None
-            self._last_bounce_time_s = float("-inf")
+            if discontinuity_reason == "physical_discontinuity":
+                self._bounce_index_since_last_hit = 0
+                self._last_bounce_half = None
+                self._last_bounce_time_s = float("-inf")
             result.warnings.append("event_state_reset_on_track_discontinuity")
         self._track_identity = identity
 
@@ -485,7 +506,6 @@ class CourtEventInterpreter:
             self._register_bounce(
                 result,
                 candidate_sample,
-                active_side,
                 now_s,
                 candidate_evidence,
                 candidate_warnings,
@@ -808,7 +828,7 @@ class CourtEventInterpreter:
         self._ground_age_frames = 0
         self._rising_frames = 0
         self._bounce_index_since_last_hit = 0
-        self._last_bounce_side = None
+        self._last_bounce_half = None
         self._last_bounce_time_s = float("-inf")
         self._last_event_time_s = now_s
         self._last_hit_time_s = now_s
@@ -822,24 +842,29 @@ class CourtEventInterpreter:
         self,
         result: CourtEventResult,
         contact: _MotionSample,
-        active_side: str,
         now_s: float,
         evidence: list[str],
         warnings: list[str],
         metrics: dict[str, float | bool | str],
     ) -> None:
+        contact_half = self._contact_physical_half(contact)
         stale_rally_state = (
-            self._last_bounce_side == active_side
+            contact_half is not None
+            and self._last_bounce_half == contact_half
             and self.rally_state_timeout_s > 0.0
             and now_s - self._last_bounce_time_s
             > self.rally_state_timeout_s
         )
-        if self._last_bounce_side != active_side or stale_rally_state:
+        if (
+            contact_half is None
+            or self._last_bounce_half != contact_half
+            or stale_rally_state
+        ):
             self._bounce_index_since_last_hit = 0
         if stale_rally_state:
             result.warnings.append("rally_state_reset_after_timeout")
         self._bounce_index_since_last_hit += 1
-        self._last_bounce_side = active_side
+        self._last_bounce_half = contact_half
         self._last_bounce_time_s = now_s
         self._ground_state = (
             "landed_outside"
@@ -865,6 +890,18 @@ class CourtEventInterpreter:
         result.warnings.append("image_plane_kinematics_only")
         self._attach_contact(result, contact, metrics)
 
+    def _contact_physical_half(self, contact: _MotionSample) -> str | None:
+        if contact.court_xy is None or len(contact.court_xy) < 2:
+            return None
+        y_ft = float(contact.court_xy[1])
+        if not isfinite(y_ft):
+            return None
+        if y_ft < self.net_y_ft - self.net_deadband_ft:
+            return "low_y"
+        if y_ft > self.net_y_ft + self.net_deadband_ft:
+            return "high_y"
+        return None
+
     @staticmethod
     def _attach_contact(
         result: CourtEventResult,
@@ -872,6 +909,7 @@ class CourtEventInterpreter:
         metrics: dict[str, float | bool | str],
     ) -> None:
         result.contact_frame_index = contact.frame_index
+        result.contact_timestamp_s = contact.timestamp_s
         result.contact_image_xy = list(contact.image_xy)
         result.contact_court_xy = (
             list(contact.court_xy) if contact.court_xy is not None else None

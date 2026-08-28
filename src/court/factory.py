@@ -44,7 +44,7 @@ def build_court_projection(
         layout,
         preferred_width=values.get("panel_width", 560),
         margin_px=values.get("panel_margin_px", 28),
-        outside_margin_ft=values.get("outside_margin_ft", 30.0),
+        outside_margin_ft=values.get("outside_margin_ft", 6.0),
         trail_length=values.get("trail_length", 15),
         status_font_path=values.get("status_font_path"),
         status_font_size=values.get("status_font_size", 48),
@@ -111,6 +111,11 @@ def build_court_projection(
         player_foot_band_ratio=event_values.get(
             "player_foot_band_ratio",
             0.18,
+        ),
+        net_y_ft=layout.net_y_ft,
+        net_deadband_ft=event_values.get(
+            "net_deadband_ft",
+            values.get("net_deadband_ft", 0.75),
         ),
     )
     return projector, renderer, event_interpreter
