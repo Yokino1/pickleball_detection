@@ -4,6 +4,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+Ultralytics/
 
 outputs/*
 !outputs/.gitkeep
@@ -16,6 +17,8 @@ artifacts/models/*.onnx
 artifacts/models/*.engine
 artifacts/models/*.pt
 artifacts/models/*_openvino_model/
+legacy/**/data/
+legacy/**/artifacts/
 
 datasets/*.zip
 datasets/*/
@@ -30,5 +33,8 @@ datasets/*/test/
 datasets/cleaned_ball_detection/manifest.csv
 
 *.log
+*.partial.mp4
+*.partial.json
+*.partial.jsonl
 .DS_Store
 Thumbs.db

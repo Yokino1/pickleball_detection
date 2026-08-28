@@ -1,0 +1,158 @@
+schema_version: 1
+profile:
+  name: person_contact_dual_camera
+  revision: 4
+  status: experimental
+
+input:
+  source: data/sideview_raw
+
+detector:
+  backend: auto
+  model: artifacts/models/ball_best.pt
+  ball_class_id: 0
+  imgsz: 960
+  low_conf: 0.12
+  iou_threshold: 0.50
+  max_detections: 32
+  duplicate_iou_threshold: 0.20
+  duplicate_center_scale: 0.75
+  duplicate_center_px: 6.0
+  device: null
+  exclude_region: null
+
+tracker:
+  high_conf: 0.20
+  low_conf: 0.12
+  min_hits: 2
+  max_prediction_ms: 120.0
+  max_missing_ms: 350.0
+  base_gate_px: 55.0
+  max_gate_px: 180.0
+  gate_growth_px_per_second: 300.0
+  velocity_gate_scale: 0.8
+  tentative_gate_px: 150.0
+  # 3200 * 3.0 = 9600 px/s for the historical 3840-source half-court crops.
+  max_speed_px_per_second: 3200.0
+  reference_frame_width: 1280.0
+  default_fps: 30.0
+  require_motion_confirmation: true
+  motion_threshold_px: 12.0
+  max_stationary_ms: 1500.0
+  unconfirmed_max_ms: 1500.0
+  max_output_tracks: 1
+
+  impact_recovery_gate_px: 260.0
+  impact_recovery_min_speed_px_per_second: 300.0
+  impact_recovery_min_missing_ms: 20.0
+  impact_recovery_max_missing_ms: 120.0
+  require_contact_for_impact_recovery: true
+  contact_margin_ratio: 0.20
+  max_flight_direction_change_deg: 60.0
+  direction_gate_min_speed_px_per_second: 250.0
+  direction_gate_min_hits: 3
+
+  motion_model: constant_acceleration
+  process_noise: 1200.0
+  acceleration_process_noise: 3000.0
+  measurement_noise: 4.0
+  constant_acceleration_min_observations: 4
+  max_acceleration_px_per_second2: 12000.0
+  acceleration_decay: 0.70
+  use_nis_gate: true
+  nis_gate_threshold: 10.75
+  nis_gate_min_hits: 4
+  max_observed_acceleration_px_per_second2: 16000.0
+  acceleration_gate_min_hits: 4
+
+  prediction_min_confidence: 0.12
+  fast_prediction_speed_px_per_second: 800.0
+  fast_max_prediction_ms: 60.0
+  continuous_prediction_horizon: true
+  prediction_velocity_decay: 0.90
+  min_motion_speed_px_per_second: 16.0
+  confidence_decay: 0.82
+  max_tracks: 32
+  emit_tentative: false
+
+runtime:
+  detector_interval: 1
+  fail_on_detector_error: true
+  temporal_motion:
+    enabled: true
+    analysis_width: 640
+    difference_threshold: 15
+    min_motion_fraction: 0.010
+    region_scale: 1.5
+    min_region_radius_px: 8
+    max_global_motion_fraction: 0.35
+    blur_kernel: 5
+    dilation_iterations: 2
+  fast_motion:
+    enabled: true
+    analysis_width: 960
+    difference_threshold: 24
+    min_component_area: 2.0
+    max_component_area: 240.0
+    max_component_dimension: 64
+    max_aspect_ratio: 8.0
+    min_speed_px_per_second: 160.0
+    max_speed_px_per_second: 3200.0
+    reference_frame_width: 1280.0
+    min_streak: 2
+    confidence: 0.21
+    max_proposals: 4
+    max_global_motion_fraction: 0.20
+    blur_kernel: 3
+    dilation_iterations: 1
+  dual_camera_handoff:
+    enabled: true
+    net_margin_ratio: 0.22
+    receiving_band_ratio: 0.35
+    min_toward_net_speed_px_per_second: 220.0
+    alert_duration_ms: 180.0
+    reference_frame_width: 1280.0
+    left_net_edge: right
+    right_net_edge: left
+  dual_camera_streams:
+    # Historical fixed scale for two 1920 crops from one 3840 source.
+    left:
+      frame_scale_override: 3.0
+    right:
+      frame_scale_override: 3.0
+  camera_motion:
+    enabled: true
+    analysis_width: 640
+    max_corners: 300
+    min_inliers: 20
+    max_shift_px: 80.0
+    ransac_threshold_px: 2.5
+  person_detection:
+    enabled: true
+    model: artifacts/models/yolo11n.pt
+    person_class_id: 0
+    conf_threshold: 0.30
+    iou_threshold: 0.50
+    imgsz: 416
+    max_detections: 16
+    device: null
+    interval_frames: 5
+    fail_on_error: true
+    box_tracker:
+      max_missing_detection_runs: 3
+      association_iou: 0.10
+      center_gate_height_scale: 0.80
+      velocity_decay: 0.80
+    player_selection:
+      max_players: 4
+      min_track_hits: 1
+      play_area_normalized: [0.0, 0.20, 1.0, 1.0]
+      spectator_exclusion_regions: []
+
+output:
+  video: outputs/experiments/single/person_contact/tracking_overlay.mp4
+  jsonl: outputs/experiments/single/person_contact/tracking.jsonl
+  codec: mp4v
+  trail_length: 10
+  draw_raw_detections: false
+  draw_players: false

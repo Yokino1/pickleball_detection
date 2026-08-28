@@ -133,9 +133,13 @@ class BallTrack:
     center: Optional[list[float]] = None          # [cx, cy] in image pixels
     bbox: Optional[list[float]] = None            # [x1, y1, x2, y2] in image pixels
     confidence: float = 0.0
-    velocity: Optional[list[float]] = None        # [vx, vy] in pixels / frame
+    velocity: Optional[list[float]] = None        # [vx, vy] in image pixels / second
+    acceleration: Optional[list[float]] = None    # [ax, ay] in image pixels / second^2
+    motion_model: str = "constant_velocity"
     missing_frames: int = 0                       # consecutive frames without detection
+    missing_time_ms: float = 0.0                  # elapsed time without detection
     source: str = "none"                          # "detector" | "prediction" | "none"
+    observation_source: Optional[str] = None      # internal detector source; omitted from JSON output
     roi: Optional[list[float]] = None             # [x1, y1, x2, y2] suggested search region
     age: int = 0                                  # frames since this track was created
     hits: int = 0                                 # accepted detector observations
@@ -151,7 +155,14 @@ class BallTrack:
             "bbox": _sanitize(self.bbox) if self.bbox is not None else None,
             "confidence": _sanitize(self.confidence),
             "velocity": _sanitize(self.velocity) if self.velocity is not None else None,
+            "acceleration": (
+                _sanitize(self.acceleration)
+                if self.acceleration is not None
+                else None
+            ),
+            "motion_model": self.motion_model,
             "missing_frames": _sanitize(self.missing_frames),
+            "missing_time_ms": _sanitize(self.missing_time_ms),
             "source": self.source,
             "roi": _sanitize(self.roi) if self.roi is not None else None,
             "age": _sanitize(self.age),
@@ -176,20 +187,50 @@ class CourtInfo:
     """
 
     layout: str = "pickleball_14pt"
+    coordinate_system: str = "pickleball_full_court_ft"
+    coordinate_system_version: int = 1
+    active_side: Optional[str] = None
+    calibration_id: Optional[str] = None
+    calibration_source: Optional[str] = None
+    image_xy: Optional[list[float]] = None
     projection_status: str = "none"
+    projection_valid: bool = False
     visible_keypoints: list[int] = field(default_factory=list)
     homography_available: bool = False
     ball_court_xy: Optional[list[float]] = None   # [x, y] in court feet
+    reprojection_error_px: Optional[float] = None
+    track_status: Optional[str] = None
+    observed: bool = False
+    predicted: bool = False
+    inside_court: Optional[bool] = None
+    event: Optional[dict] = None
     ball_zone: Optional[str] = None               # Deprecated projection output; currently not computed.
     projection_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "layout": self.layout,
+            "coordinate_system": self.coordinate_system,
+            "coordinate_system_version": self.coordinate_system_version,
+            "active_side": self.active_side,
+            "calibration_id": self.calibration_id,
+            "calibration_source": self.calibration_source,
+            "image_xy": (
+                _sanitize(self.image_xy)
+                if self.image_xy is not None
+                else None
+            ),
             "projection_status": self.projection_status,
+            "projection_valid": self.projection_valid,
             "visible_keypoints": _sanitize(self.visible_keypoints),
             "homography_available": self.homography_available,
             "ball_court_xy": _sanitize(self.ball_court_xy) if self.ball_court_xy is not None else None,
+            "reprojection_error_px": _sanitize(self.reprojection_error_px),
+            "track_status": self.track_status,
+            "observed": self.observed,
+            "predicted": self.predicted,
+            "inside_court": self.inside_court,
+            "event": _sanitize(self.event) if self.event is not None else None,
             "ball_zone": self.ball_zone,
             "projection_warnings": _sanitize(self.projection_warnings),
         }
@@ -207,6 +248,10 @@ class PlayerDetection:
     track_id: Optional[int] = None         # tracking ID if available
     confidence: float = 0.0
     foot_point: Optional[list[float]] = None  # [x, y] estimated foot position
+    eligible_player: bool = False
+    selection_score: float = 0.0
+    track_hits: int = 1
+    source: str = "unknown"
 
     def to_dict(self) -> dict:
         return {
@@ -214,6 +259,10 @@ class PlayerDetection:
             "track_id": _sanitize(self.track_id) if self.track_id is not None else None,
             "confidence": _sanitize(self.confidence),
             "foot_point": _sanitize(self.foot_point) if self.foot_point is not None else None,
+            "eligible_player": self.eligible_player,
+            "selection_score": _sanitize(self.selection_score),
+            "track_hits": self.track_hits,
+            "source": self.source,
         }
 
 

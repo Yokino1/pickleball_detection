@@ -3,9 +3,16 @@ import unittest
 from pathlib import Path
 
 from apps.track_video import batch_output_paths, discover_videos
+from src.tracking.factory import build_tracker
 
 
 class TrackVideoBatchTest(unittest.TestCase):
+    def test_tracker_uses_input_video_fps_for_timestamp_fallback(self):
+        tracker = build_tracker({"tracker": {"default_fps": 30}}, fps=20.0)
+
+        self.assertEqual(tracker.default_fps, 20.0)
+        self.assertAlmostEqual(tracker.default_dt_s, 0.05)
+
     def test_discovers_supported_videos_in_stable_order(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

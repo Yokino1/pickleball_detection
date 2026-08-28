@@ -1,14 +1,18 @@
 schema_version: 1
+profile:
+  name: pickleball_tracking
+  revision: 9
+  status: maintained
 
 input:
-  source: data/reference/test_2.mp4
+  source: data/sideview_raw
 
 detector:
   backend: auto
   model: artifacts/models/ball_best.pt
   ball_class_id: 0
   imgsz: 960
-  low_conf: 0.15
+  low_conf: 0.12
   iou_threshold: 0.50
   max_detections: 32
   duplicate_iou_threshold: 0.20
@@ -18,39 +22,232 @@ detector:
   exclude_region: null
 
 tracker:
-  high_conf: 0.25
-  low_conf: 0.15
+  high_conf: 0.20
+  low_conf: 0.12
   min_hits: 2
-  max_predict_frames: 8
-  max_missing_frames: 20
+  max_prediction_ms: 120.0
+  max_missing_ms: 350.0
   base_gate_px: 55.0
   max_gate_px: 180.0
-  gate_growth_px: 15.0
+  gate_growth_px_per_second: 300.0
   velocity_gate_scale: 0.8
   tentative_gate_px: 150.0
-  max_speed_px_per_frame: 120.0
+  # Reference-width limit. Paired crops derive their shared scale from total
+  # width: a 1280 source uses 3200 px/s; a 3840 source uses 9600 px/s.
+  max_speed_px_per_second: 3200.0
   reference_frame_width: 1280.0
+  default_fps: 30.0
   require_motion_confirmation: true
   motion_threshold_px: 12.0
-  max_stationary_frames: 30
-  unconfirmed_max_frames: 30
-  max_output_tracks: 0
+  max_stationary_ms: 1500.0
+  unconfirmed_max_ms: 1500.0
+  max_output_tracks: 1
+  observation_first_output: true
+
   impact_recovery_gate_px: 260.0
-  impact_recovery_min_speed_px: 15.0
-  prediction_min_confidence: 0.15
-  fast_prediction_speed_px: 40.0
-  fast_max_predict_frames: 3
-  prediction_velocity_decay: 0.90
-  min_motion_speed_px: 0.8
-  confidence_decay: 0.82
-  process_noise: 12.0
+  impact_recovery_min_speed_px_per_second: 300.0
+  impact_recovery_min_missing_ms: 20.0
+  impact_recovery_max_missing_ms: 120.0
+  require_contact_for_impact_recovery: true
+  contact_margin_ratio: 0.20
+  # Strict image-plane rebound recovery. It cannot bypass the global speed
+  # ceiling, accepts only primary model observations, and remains separate
+  # from player-contact impact recovery.
+  bounce_recovery_enabled: true
+  bounce_recovery_sources: [yolo, onnxruntime]
+  bounce_recovery_min_downward_speed_px_per_second: 100.0
+  bounce_recovery_min_upward_speed_px_per_second: 40.0
+  bounce_recovery_min_horizontal_speed_px_per_second: 40.0
+  bounce_recovery_max_displacement_px: 35.0
+  bounce_recovery_max_missing_ms: 80.0
+  # Contact evidence is permissive, not exclusive: a valid strict rebound may
+  # occur close to a player's feet.
+  bounce_recovery_require_no_contact: false
+  # Consecutive nearby primary observations may correct a lagging CA/NIS state
+  # only when their raw measured directions remain physically continuous.
+  primary_continuity_recovery_enabled: true
+  primary_observation_sources: [yolo, onnxruntime]
+  primary_continuity_gate_px: 55.0
+  max_flight_direction_change_deg: 60.0
+  direction_gate_min_speed_px_per_second: 250.0
+  direction_gate_min_hits: 4
+
+  motion_model: constant_acceleration
+  process_noise: 1200.0
+  acceleration_process_noise: 3000.0
   measurement_noise: 4.0
+  constant_acceleration_min_observations: 4
+  max_acceleration_px_per_second2: 12000.0
+  acceleration_decay: 0.70
+  use_nis_gate: true
+  nis_gate_threshold: 10.75
+  nis_gate_min_hits: 4
+  max_observed_acceleration_px_per_second2: 16000.0
+  acceleration_gate_min_hits: 4
+
+  prediction_min_confidence: 0.12
+  fast_prediction_speed_px_per_second: 800.0
+  fast_max_prediction_ms: 60.0
+  continuous_prediction_horizon: true
+  prediction_velocity_decay: 0.90
+  min_motion_speed_px_per_second: 16.0
+  confidence_decay: 0.82
   max_tracks: 32
   emit_tentative: false
 
 runtime:
   detector_interval: 1
   fail_on_detector_error: true
+  temporal_motion:
+    enabled: true
+    analysis_width: 640
+    difference_threshold: 15
+    min_motion_fraction: 0.010
+    region_scale: 1.5
+    min_region_radius_px: 8
+    max_global_motion_fraction: 0.35
+    blur_kernel: 5
+    dilation_iterations: 2
+  fast_motion:
+    enabled: true
+    analysis_width: 960
+    difference_threshold: 24
+    min_component_area: 2.0
+    max_component_area: 240.0
+    max_component_dimension: 64
+    max_aspect_ratio: 8.0
+    min_speed_px_per_second: 160.0
+    max_speed_px_per_second: 3200.0
+    reference_frame_width: 1280.0
+    min_streak: 2
+    confidence: 0.21
+    max_proposals: 4
+    max_global_motion_fraction: 0.20
+    blur_kernel: 3
+    dilation_iterations: 1
+  dual_camera_handoff:
+    enabled: true
+    strict_state_machine: true
+    observation_first: true
+    primary_observation_sources: [yolo, onnxruntime]
+    receiver_confirmation_hits: 2
+    switch_lock_ms: 100.0
+    net_margin_ratio: 0.22
+    receiving_band_ratio: 0.35
+    min_toward_net_speed_px_per_second: 220.0
+    alert_duration_ms: 180.0
+    reference_frame_width: 1280.0
+    left_net_edge: right
+    right_net_edge: left
+  dual_camera_streams:
+    # The maintained offline inputs are two crops from one original frame.
+    # Derive a shared scale from (left_width + right_width) / 1280 so that
+    # 640+640 -> 1.0 and 1920+1920 -> 3.0. Real independent cameras must use
+    # explicitly calibrated per-stream overrides instead.
+    frame_scale_mode: paired_crop_total_width
+    left: {}
+    right: {}
+  court_projection:
+    enabled: true
+    coordinate_system: pickleball_full_court_ft
+    coordinate_system_version: 1
+    # Shared physical-half/net deadband for court events and referee. Keep one
+    # source so advisory second-bounce and rally settlement cannot diverge.
+    net_deadband_ft: 0.75
+    panel_width: 1000
+    panel_margin_px: 28
+    outside_margin_ft: 30.0
+    trail_length: 15
+    # Chinese status uses Microsoft YaHei/SimHei on Windows and common
+    # Noto/WenQuanYi CJK fonts on Linux. Set an explicit path on RK3588S.
+    status_font_path: null
+    status_font_size: 64
+    event_interpretation:
+      enabled: true
+      hit_flash_frames: 5
+      ground_min_hold_frames: 3
+      rise_confirm_frames: 2
+      rise_min_speed_px_per_second: 40.0
+      # Read-only event classification. Thresholds are reference-scale image
+      # pixels and are multiplied by the per-side frame scale.
+      kinematic_enabled: true
+      max_observation_gap_ms: 80.0
+      bounce_min_downward_speed_px_per_second: 100.0
+      bounce_min_upward_speed_px_per_second: 40.0
+      # A vertical-dominant impulse supports bounce. A sharp change inside an
+      # existing eligible-player body region supports hit.
+      bounce_max_horizontal_impulse_ratio: 1.5
+      hit_min_direction_change_deg: 35.0
+      hit_min_impulse_px_per_second: 300.0
+      # Reject impossible cross-ID jumps before they can become hit evidence.
+      # Reference-scale pixels/second; multiplied by each stream scale.
+      discontinuity_hit_max_speed_px_per_second: 3200.0
+      event_cooldown_ms: 160.0
+      post_hit_bounce_suppression_ms: 180.0
+      # Not a rule-defined second-bounce time window. This only prevents a
+      # stale bounce from a long-lost previous rally being counted later.
+      rally_state_timeout_ms: 5000.0
+      player_contact_margin_ratio: 0.20
+      # Wider read-only reach zone for a hand/paddle extending beyond the
+      # existing person box. It never changes R9 association or acceptance.
+      player_reach_margin_ratio: 0.35
+      player_foot_band_ratio: 0.18
+    cameras:
+      left:
+        calibration_id: full_clean_left_frame0_rough_r1
+        source: manual_rough_fixed_view
+        image_size: [1920, 2160]
+        keypoints:
+          kp0: [-40.0, 1055.0]
+          kp2: [458.0, 1651.0]
+          kp6: [1885.0, 895.0]
+          kp7: [1885.0, 1640.0]
+      right:
+        calibration_id: full_clean_right_frame0_rough_r1
+        source: manual_rough_fixed_view
+        image_size: [1920, 2160]
+        keypoints:
+          kp6: [5.0, 905.0]
+          kp7: [100.0, 1640.0]
+          kp11: [1960.0, 1060.0]
+          kp13: [1960.0, 1450.0]
+  referee:
+    # Downstream Demo layer only. It consumes the final court projection and
+    # candidate events; it never feeds back into revision 9 tracking.
+    enabled: true
+    contract_version: 1
+    scoring_mode: rally_point
+    # Optional downstream expectation for diagnostics only. A mismatch never
+    # blocks serve confirmation and never changes the winner or score.
+    expected_server_side: null
+    # The first confirmed serve initializes ownership when no side is set.
+    # Each resolvable rally then gives the next serve to its winner, and a
+    # route from the non-owning side cannot start the next rally.
+    service_ownership_enabled: true
+    initial_server_side: null
+    # A confirmed serve also requires at least one eligible-player bounding-box
+    # center from the active camera to project outside the canonical court.
+    require_server_player_center_outside_court: true
+    side_mapping:
+      low_y: left
+      high_y: right
+    route_confirm_observed_frames: 3
+    route_min_netward_displacement_ft: 1.5
+    net_cross_confirm_observed_frames: 2
+    net_cross_min_displacement_ft: 0.15
+    max_observation_gap_ms: 100.0
+    # Explicit rather than constructor-derived so the effective manifest alone
+    # records the bounded route confirmation behavior.
+    motion_confirmation_window_ms: 200.0
+    post_rally_guard_ms: 800.0
+    post_rally_rearm_missing_ms: 200.0
+    post_rally_rearm_stable_observed_frames: 5
+    post_rally_rearm_stable_displacement_ft: 0.5
+    rally_lost_timeout_ms: 5000.0
+    pending_bounce_timeout_ms: 5000.0
+    hit_assist_window_ms: 300.0
+    observation_margin_ft: 6.0
+    require_serve_arming: true
   camera_motion:
     enabled: true
     analysis_width: 640
@@ -58,10 +255,32 @@ runtime:
     min_inliers: 20
     max_shift_px: 80.0
     ransac_threshold_px: 2.5
+  person_detection:
+    enabled: true
+    model: artifacts/models/yolo11n.pt
+    person_class_id: 0
+    conf_threshold: 0.30
+    iou_threshold: 0.50
+    imgsz: 416
+    max_detections: 16
+    device: null
+    interval_frames: 5
+    fail_on_error: true
+    box_tracker:
+      max_missing_detection_runs: 3
+      association_iou: 0.10
+      center_gate_height_scale: 0.80
+      velocity_decay: 0.80
+    player_selection:
+      max_players: 4
+      min_track_hits: 1
+      play_area_normalized: [0.0, 0.20, 1.0, 1.0]
+      spectator_exclusion_regions: []
 
 output:
-  video: outputs/tracking_overlay.mp4
-  jsonl: outputs/tracking.jsonl
+  video: outputs/experiments/current/tracking_overlay.mp4
+  jsonl: outputs/experiments/current/tracking.jsonl
   codec: mp4v
-  trail_length: 30
+  trail_length: 10
   draw_raw_detections: false
+  draw_players: false
